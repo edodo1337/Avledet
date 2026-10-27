@@ -110,6 +110,8 @@ namespace avledet::util::CSU {
             return modAngle;
     }
 
+    // The UnityEngine C# operators as the game's Mono runs them: a float expression is evaluated in
+    // double and rounded when stored (checked on managed_test.json dumped from the game)
     Vector3f Quaternion::operator*(Vector3f point) const
     {
         float x2 = x * 2.f;
@@ -128,16 +130,19 @@ namespace avledet::util::CSU {
         float wy2 = w * y2;
         float wz2 = w * z2;
 
-        return {(1.f - (y2s + z2s)) * point.x + (xy2 - wz2) * point.y + (xz2 + wy2) * point.z,
-                (xy2 + wz2) * point.x + (1.f - (x2s + z2s)) * point.y + (yz2 - wx2) * point.z,
-                (xz2 - wy2) * point.x + (yz2 + wx2) * point.y + (1.f - (x2s + y2s)) * point.z};
+        double px = point.x, py = point.y, pz = point.z;
+        return {(float) ((1.0 - ((double) y2s + z2s)) * px + ((double) xy2 - wz2) * py + ((double) xz2 + wy2) * pz),
+                (float) (((double) xy2 + wz2) * px + (1.0 - ((double) x2s + z2s)) * py + ((double) yz2 - wx2) * pz),
+                (float) (((double) xz2 - wy2) * px + ((double) yz2 + wx2) * py + (1.0 - ((double) x2s + y2s)) * pz)};
     }
 
     Quaternion Quaternion::operator*(Quaternion rhs) const
     {
-        return Quaternion(
-                w * rhs.x + x * rhs.w + y * rhs.z - z * rhs.y, w * rhs.y + y * rhs.w + z * rhs.x - x * rhs.z,
-                w * rhs.z + z * rhs.w + x * rhs.y - y * rhs.x, w * rhs.w - x * rhs.x - y * rhs.y - z * rhs.z);
+        double lx = x, ly = y, lz = z, lw = w;
+        return Quaternion((float) (lw * rhs.x + lx * rhs.w + ly * rhs.z - lz * rhs.y),
+                          (float) (lw * rhs.y + ly * rhs.w + lz * rhs.x - lx * rhs.z),
+                          (float) (lw * rhs.z + lz * rhs.w + lx * rhs.y - ly * rhs.x),
+                          (float) (lw * rhs.w - lx * rhs.x - ly * rhs.y - lz * rhs.z));
     }
 
     void Quaternion::operator*=(Quaternion rhs)
@@ -192,65 +197,49 @@ namespace avledet::util::CSU {
                           (((cz * C + D * sz) + A * o) - B * o), (((D * cz - A * o) - B * o) - C * sz));
     }
 
-    // https://web.archive.org/web/20221126145919/https://gist.github.com/aeroson/043001ca12fe29ee911e
+    // UnityPlayer.so Quaternion.LookRotation: forward / |forward|, right = up x forward normalized,
+    // up = forward x right, then MatrixToQuaternion and a normalize. Unity takes FromToRotation(z, forward)
+    // or the identity for zero or parallel vectors; the generation never gets those, the identity here.
     Quaternion Quaternion::look_rotation(Vector3f forward, Vector3f up)
     {
-        // TODO lowercase migrate
-        forward        = forward.normal();
-        Vector3f right = up.cross(forward).normal();
-        up             = forward.cross(right);
+        float fm = std::sqrt((forward.x * forward.x + forward.y * forward.y) + forward.z * forward.z);
+        if (1e-5f > fm)
+            return IDENTITY;
+        Vector3f f = forward / fm;
+        Vector3f r = up.cross(f);
+        float rm   = std::sqrt((r.x * r.x + r.y * r.y) + r.z * r.z);
+        if (1e-5f > rm)
+            return IDENTITY;
+        r          = r / rm;
+        Vector3f u = f.cross(r);
+        if (std::abs(((u.x * u.x + u.y * u.y) + u.z * u.z) - 1.f) > 1e-6f)
+            return IDENTITY;
 
-        auto m00 = right.x;
-        auto m01 = right.y;
-        auto m02 = right.z;
-        auto m10 = up.x;
-        auto m11 = up.y;
-        auto m12 = up.z;
-        auto m20 = forward.x;
-        auto m21 = forward.y;
-        auto m22 = forward.z;
-
-        auto num8 = (m00 + m11) + m22;
-        Quaternion quaternion;
-        if (num8 > 0) {
-            auto num     = std::sqrt(num8 + 1.f);
-            quaternion.w = num * 0.5f;
-            num          = 0.5f / num;
-            quaternion.x = (m12 - m21) * num;
-            quaternion.y = (m20 - m02) * num;
-            quaternion.z = (m01 - m10) * num;
-            return quaternion;
+        // MatrixToQuaternion, columns right, up, forward: M(i, j) = d[i + 3 * j]
+        float const d[9] = {r.x, r.y, r.z, u.x, u.y, u.z, f.x, f.y, f.z};
+        float q[4];
+        float trace = (d[0] + d[4]) + d[8];
+        if (trace > 0) {
+            float s = std::sqrt(trace + 1.f);
+            q[3]    = s * .5f;
+            float c = .5f / s;
+            q[0]    = (d[5] - d[7]) * c;
+            q[1]    = (d[6] - d[2]) * c;
+            q[2]    = (d[1] - d[3]) * c;
+        } else {
+            int i = d[4] > d[0] ? 1 : 0;
+            if (d[8] > d[4 * i])
+                i = 2;
+            int j = (i + 1) % 3, k = (j + 1) % 3;
+            float s = std::sqrt(((d[4 * i] - d[4 * j]) - d[4 * k]) + 1.f);
+            q[i]    = s * .5f;
+            float c = .5f / s;
+            q[3]    = (d[3 * j + k] - d[3 * k + j]) * c;
+            q[j]    = (d[3 * i + j] + d[3 * j + i]) * c;
+            q[k]    = (d[3 * i + k] + d[3 * k + i]) * c;
         }
-
-        if ((m00 >= m11) && (m00 >= m22)) {
-            auto num7    = std::sqrt(((1.f + m00) - m11) - m22);
-            auto num4    = 0.5f / num7;
-            quaternion.x = 0.5f * num7;
-            quaternion.y = (m01 + m10) * num4;
-            quaternion.z = (m02 + m20) * num4;
-            quaternion.w = (m12 - m21) * num4;
-            return quaternion;
-        }
-
-        if (m11 > m22) {
-            auto num6    = std::sqrt(((1.f + m11) - m00) - m22);
-            auto num3    = 0.5f / num6;
-            quaternion.x = (m10 + m01) * num3;
-            quaternion.y = 0.5f * num6;
-            quaternion.z = (m21 + m12) * num3;
-            quaternion.w = (m20 - m02) * num3;
-            return quaternion;
-        }
-
-        auto num5 = std::sqrt(((1.f + m22) - m00) - m11);
-        auto num2 = 0.5f / num5;
-
-        quaternion.x = (m20 + m02) * num2;
-        quaternion.y = (m21 + m12) * num2;
-        quaternion.z = 0.5f * num5;
-        quaternion.w = (m01 - m10) * num2;
-
-        return quaternion;
+        float n = std::sqrt(((q[0] * q[0] + q[1] * q[1]) + q[2] * q[2]) + q[3] * q[3]);
+        return Quaternion(q[0] / n, q[1] / n, q[2] / n, q[3] / n);
     }
 
     Quaternion Quaternion::inverse(Quaternion rotation)

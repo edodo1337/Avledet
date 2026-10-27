@@ -993,9 +993,12 @@ void ZoneManager::PopulateFoliage(Heightmap &heightmap, std::vector<ClearArea> c
 
                             if (zoneVegetation->m_chanceToUseGroundTilt > 0
                                 && state.next_float() <= zoneVegetation->m_chanceToUseGroundTilt) {
-                                auto rotation2 = Quaternion::euler(0, rot_y, 0);
-                                rotation       = Quaternion::look_rotation(
-                                        normal.cross(rotation2 * Vector3f::FORWARD), normal);
+                                auto f = Quaternion::euler(0, rot_y, 0) * Vector3f::FORWARD;
+                                // Vector3.Cross in C#: Mono evaluates it in double
+                                Vector3f forward((float) ((double) normal.y * f.z - (double) normal.z * f.y),
+                                                 (float) ((double) normal.z * f.x - (double) normal.x * f.z),
+                                                 (float) ((double) normal.x * f.y - (double) normal.y * f.x));
+                                rotation = Quaternion::look_rotation(forward, normal);
                             } else {
                                 rotation = Quaternion::euler(rot_x, rot_y, rot_z);
                             }
@@ -1420,12 +1423,19 @@ std::vector<ZoneManager::ClearArea> ZoneManager::TryGenerateFeature(ZoneID zoneI
         VUtils::Random::State random(GeoManager::instance().GetSeed() + zoneID.x * 4271 + zoneID.y * 9187);
         Quaternion rot;
         if (location.m_slopeRotation) {
-            // face down the slope, snapped to 22.5 degrees
+            // face down the slope: LookRotation, eulerAngles.y snapped to 22.5 degrees (Mathf.Round rounds
+            // half to even), set back through the eulerAngles setter
             float delta;
             Vector3f slope;
             GetTerrainDelta(random, position, location.m_exteriorRadius, delta, slope);
-            float yaw = std::atan2(slope.x, slope.z) * (float) (180.0 / VUtils::PI);
-            rot = Quaternion::euler(0, std::round(yaw / 22.5f) * 22.5f, 0);
+            Vector3f forward(slope.x, 0, slope.z);
+            // Vector3.Normalize: the magnitude in double
+            float m = (float) std::sqrt((double) forward.x * forward.x + (double) forward.y * forward.y
+                                        + (double) forward.z * forward.z);
+            forward = m > 1e-5f ? forward / m : Vector3f::ZERO;
+            auto e  = Quaternion::look_rotation(forward, Vector3f::UP).euler_angles();
+            e.y     = (float) std::nearbyint((double) (e.y / 22.5f)) * 22.5f;
+            rot     = Quaternion::euler(e);
         } else if (location.m_randomRotation) {
             rot = Quaternion::euler(0, random.range(0, 16) * 22.5f, 0);
         }

@@ -83,3 +83,35 @@ TEST(UnityTransform, LocalPose)
     }
     EXPECT_EQ(bad, 0);
 }
+
+TEST(UnityTransform, LookRotation)
+{
+    auto rows = Load("look_test.json");
+    if (rows.empty())
+        GTEST_SKIP() << "AVL_TRANSFORM_TESTS not set";
+    int bad = 0;
+    for (auto &&r : rows) {
+        Row row {r};
+        auto forward = row.v(); auto up = row.v(); auto q = row.q();
+        bad += !Same(Quaternion::look_rotation(forward, up), q);
+    }
+    EXPECT_EQ(bad, 0);
+}
+
+// UnityEngine C# operators under the game's Mono (double intermediates)
+TEST(UnityTransform, ManagedMath)
+{
+    auto rows = Load("managed_test.json");
+    if (rows.empty())
+        GTEST_SKIP() << "AVL_TRANSFORM_TESTS not set";
+    int bad = 0;
+    for (auto &&r : rows) {
+        Row row {r};
+        auto q = row.q(); auto rq = row.q(); auto a = row.v(); auto b = row.v();
+        auto qa = row.v(); auto qr = row.q(); row.v(); auto sum = row.v();
+        bad += !Same(q * a, qa);
+        bad += !Same(q * rq, qr);
+        bad += !Same(b + q * a, sum);
+    }
+    EXPECT_EQ(bad, 0);
+}
