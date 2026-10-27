@@ -71,10 +71,11 @@ void ZdoManager::Update()
 
     // vanilla SendZDOToPeers2 runs once a frame: when the timer is over 0.05 s (send-interval), one peer a
     // frame, then the wait again. One peer gets a packet every 2 frames, more peers every n + 1
-    auto now = std::chrono::steady_clock::now();
-    m_sendFrames = std::min(m_sendFrames + std::chrono::duration<double>(now - m_sendClock).count(), 0.5);
-    m_sendClock  = now;
+    // a stall is one long vanilla frame, not a burst of them: at most two frames are caught up
     constexpr double frame = 1.0 / Avledet::VANILLA_SERVER_FPS;
+    auto now     = std::chrono::steady_clock::now();
+    m_sendFrames = std::min(m_sendFrames + std::chrono::duration<double>(now - m_sendClock).count(), 2 * frame);
+    m_sendClock  = now;
     float threshold = std::chrono::duration<float>(AVL_CONFIG.m_zdo_send_interval).count();
     for (; m_sendFrames >= frame; m_sendFrames -= frame) {
         if (peers.empty())
