@@ -164,6 +164,18 @@ namespace VUtils::Math {
         return num;
     }
 
+    double Fbm(Vector2f p, int octaves, double lacunarity, double gain)
+    {
+        double num = 0, num2 = 1, x = p.x, y = p.y;
+        for (int i = 0; i < octaves; i++) {
+            num += num2 * (double) VUtils::Math::PerlinNoise((float) x, (float) y);
+            num2 *= gain;
+            x *= lacunarity;
+            y *= lacunarity;
+        }
+        return num;
+    }
+
     float FISQRT(float number)
     {
         (void) number;

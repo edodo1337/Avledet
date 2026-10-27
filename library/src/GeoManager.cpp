@@ -1020,7 +1020,7 @@ float GeoManager::GetDeepNorthHeight(float wx, float wy, VUtils::Color &mask)
     num5 = (float)((double)num5 + (double)VUtils::Math::PerlinNoise(num2 * 0.10000000149011612, num3 * 0.10000000149011612) * 0.009999999776482582);
     num5 = (float)((double)num5 + (double)VUtils::Math::PerlinNoise(num2 * 0.4000000059604645, num3 * 0.4000000059604645) * 0.003000000026077032);
     // alpha 0 matters: location placement checks mask.a for vegetation limits
-    float num9 = (float) VUtils::Math::Fbm(Vector2f((float) (num2 * 0.009999999776482582), (float) (num3 * 0.009999999776482582)), 3, 2.0f, 0.5f);
+    float num9 = (float) VUtils::Math::Fbm(Vector2f((float) (num2 * 0.009999999776482582), (float) (num3 * 0.009999999776482582)), 3, 2.0, 0.5);
     num9 = (num9 + 1.0f) / 2.0f;
     num9 = 0.3f + num9 * 0.3f;
     mask = VUtils::Color(0.0f, num9, 0.0f, 0.0f);
