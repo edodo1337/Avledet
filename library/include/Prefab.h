@@ -22,6 +22,7 @@ class Prefab
         avledet::util::CSU::Quaternion m_rot;// 16 bytes
         avledet::util::CSU::Vector3f m_pos;  // 12 bytes
         avledet::util::Hash m_prefabHash;    // 4 bytes
+        avledet::util::CSU::Vector3f m_scale = avledet::util::CSU::Vector3f(1, 1, 1);// localScale of the clone
 
         Prefab::Reference get_prefab() const;
     };

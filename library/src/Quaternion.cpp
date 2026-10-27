@@ -43,37 +43,52 @@ namespace avledet::util::CSU {
         return Vector3f(x, y, z);
     }
 
+    // Unity eulerAngles: Internal_MakePositive(Internal_ToEulerRad(q) * Rad2Deg)
     Vector3f Quaternion::euler_angles() const
     {
-        return normalize_angles(Internal_ToEulerRad(*this) * (float) (180.0 / VUtils::PI));
+        Vector3f e = Internal_ToEulerRad(*this);
+        e          = Vector3f(e.x * 57.29578f, e.y * 57.29578f, e.z * 57.29578f);
+        float negativeFlip = -0.0001f * 57.29578f;
+        float positiveFlip = 360.0f + negativeFlip;
+        for (float *v : {&e.x, &e.y, &e.z}) {
+            if (*v < negativeFlip)
+                *v += 360.0f;
+            else if (*v > positiveFlip)
+                *v -= 360.0f;
+        }
+        return e;
     }
 
-    Vector3f Quaternion::Internal_ToEulerRad(Quaternion rotation)
+    // UnityPlayer.so Quaternion::Internal_ToEulerRad: normalize, then QuaternionToEuler.
+    // Ported from the disassembly, bit exact with the game (checked on 20000 samples).
+    Vector3f Quaternion::Internal_ToEulerRad(Quaternion q)
     {
-        float sqw  = rotation.w * rotation.w;
-        float sqx  = rotation.x * rotation.x;
-        float sqy  = rotation.y * rotation.y;
-        float sqz  = rotation.z * rotation.z;
-        float unit = sqx + sqy + sqz + sqw;// if normalised is one, otherwise is correction factor
-        float test = rotation.x * rotation.w - rotation.y * rotation.z;
+        float len = std::sqrt(q.w * q.w + ((q.y * q.y + q.x * q.x) + q.z * q.z));
+        if (len < 9.99999974737875e-06f)
+            q = IDENTITY;
+        else
+            q = Quaternion(q.x / len, q.y / len, q.z / len, q.w / len);
+
+        float x = q.x, y = q.y, z = q.z, w = q.w;
+        float xx = x * x, xy = x * y, xw = x * w, yy = y * y, yz = y * z, zz = z * z, zw = z * w, ww = w * w;
+        float t = yz - xw;
+        bool singular = !(std::fabs(t) < 0.4999989867210388f);
+        float a, b;
+        if (!singular) {
+            a = (x * z + y * w) + (x * z + y * w);
+            b = ww + ((zz - xx) - yy);
+        } else {
+            float p = xw - yz, r = xy - zw, s = yz + xw;
+            a = p * r + (xy + zw) * s;
+            b = s * p - r * (xy + zw);
+        }
+        float t2  = t + t;
+        float arg = t2 < -1.0f ? -1.0f : std::fmin(1.0f, t2);
 
         Vector3f v;
-        if (test > 0.4995f * unit) {// singularity at north pole
-            v.y = 2.f * std::atan2(rotation.y, rotation.x);
-            v.x = (float) (VUtils::PI * 0.5);
-            v.z = 0;
-        } else if (test < -0.4995f * unit) {// singularity at south pole
-            v.y = -2.f * std::atan2(rotation.y, rotation.x);
-            v.x = (float) (-VUtils::PI * 0.5);
-            v.z = 0;
-        } else {
-            auto q = Quaternion(rotation.w, rotation.z, rotation.x, rotation.y);
-            v.y    = (float) std::atan2(2.f * q.x * q.w + 2.f * q.y * q.z,
-                                        1 - 2.f * (q.z * q.z + q.w * q.w));// Yaw
-            v.x    = (float) std::asin(2.f * (q.x * q.z - q.w * q.y));     // Pitch
-            v.z    = (float) std::atan2(2.f * q.x * q.y + 2.f * q.z * q.w,
-                                        1 - 2.f * (q.y * q.y + q.z * q.z));// Roll
-        }
+        v.x = -std::asin(arg);
+        v.y = std::atan2(a, b);
+        v.z = singular ? 0.0f : std::atan2((xy + zw) + (xy + zw), ((yy - zz) - xx) + ww);
         return v;
     }
 
@@ -158,33 +173,23 @@ namespace avledet::util::CSU {
     // Originally based on:
     //  https://gist.github.com/HelloKitty/91b7af87aac6796c3da9#file-quaternion-cs-L644
     // Further research finds that the above link is not an equivalent implementation.
-    Quaternion Quaternion::euler(float x, float y, float z)
+    // Unity Quaternion.Euler: Internal_FromEulerRad(v * Deg2Rad). Ported from UnityPlayer.so,
+    // the zero terms are kept as the game computes them (bit exact on 20000 samples).
+    Quaternion Quaternion::euler(float ex, float ey, float ez)
     {
-        float yaw         = x * 0.0174532924f;
-        float sinYawOver2 = std::sin(yaw * 0.5f);
-        float cosYawOver2 = std::cos(yaw * 0.5f);
-
-        float pitch         = y * 0.0174532924f;
-        float sinPitchOver2 = std::sin(pitch * 0.5f);
-        float cosPitchOver2 = std::cos(pitch * 0.5f);
-
-        float roll         = z * 0.0174532924f;
-        float sinRollOver2 = std::sin(roll * 0.5f);
-        float cosRollOver2 = std::cos(roll * 0.5f);
-
-        // Important for precision (manual inlining might affect precision)
-        float sinYawCosPitch = (sinYawOver2 * cosPitchOver2);
-        float cosYawSinPitch = (cosYawOver2 * sinPitchOver2);
-        float cosYawCosPitch = (cosYawOver2 * cosPitchOver2);
-        sinYawOver2          = -sinYawOver2 * sinPitchOver2;
-
-        Quaternion result;
-        result.x = cosRollOver2 * sinYawCosPitch + sinRollOver2 * cosYawSinPitch;
-        result.y = cosRollOver2 * cosYawSinPitch - sinRollOver2 * sinYawCosPitch;
-        result.z = cosRollOver2 * sinYawOver2 + sinRollOver2 * cosYawCosPitch;
-        result.w = cosRollOver2 * cosYawCosPitch - sinRollOver2 * sinYawOver2;
-
-        return result;
+        float const k = 0.5f, o = 0.0f;
+        ex *= 0.0174532924f;
+        ey *= 0.0174532924f;
+        ez *= 0.0174532924f;
+        float cx = std::cos(ex * k), sx = std::sin(ex * k);
+        float cy = std::cos(ey * k), sy = std::sin(ey * k);
+        float cz = std::cos(ez * k), sz = std::sin(k * ez);
+        float A = (sx * cy + cx * o) + sy * o;
+        float B = (cx * sy + cy * o) + sx * o;
+        float C = ((cy * o + cx * o) + o) - sx * sy;
+        float D = (cx * cy - sx * o) - sy * o;
+        return Quaternion(((B * sz + (A * cz + D * o)) - C * o), (((cz * B + D * o) + C * o) - A * sz),
+                          (((cz * C + D * sz) + A * o) - B * o), (((D * cz - A * o) - B * o) - C * sz));
     }
 
     // https://web.archive.org/web/20221126145919/https://gist.github.com/aeroson/043001ca12fe29ee911e

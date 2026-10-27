@@ -430,10 +430,21 @@ ZDO::reference ZdoManager::Instantiate(Prefab::Reference prefab, Vector3f pos)
     //zdo.get().m_encoded.SetPrefabIndex(PrefabManager::instance().RequirePrefabIndexByHash(prefab.m_hash));
     //zdo.get().m_pack.Set<ZDO::PREFAB_PACK_INDEX>(PrefabManager::instance().RequirePrefabIndexByHash(prefab.m_hash));
     zdo->_set_prefab_hash(prefab.get().m_hash);
-    if (prefab.get().AllFlagsPresent(Prefab::Flag::SYNC_INITIAL_SCALE)) {
-        zdo->set_local_scale(prefab.get().m_localScale, false);
-    }
+    auto &&s = prefab.get().m_localScale;
+    if (prefab.get().AllFlagsPresent(Prefab::Flag::SYNC_INITIAL_SCALE) && !(s.x == 1 && s.y == 1 && s.z == 1))
+        zdo->set_local_scale(s, false);
 
+    return zdo;
+}
+
+ZDO::reference ZdoManager::Instantiate(avledet::util::Hash hash, Vector3f pos, Vector3f localScale)
+{
+    auto &&prefab = PrefabManager::instance().get_prefab(hash);
+    auto &&zdo    = _Instantiate(pos);
+    zdo->_set_prefab_hash(prefab.get().m_hash);
+    if (prefab.get().AllFlagsPresent(Prefab::Flag::SYNC_INITIAL_SCALE)
+        && !(localScale.x == 1 && localScale.y == 1 && localScale.z == 1))
+        zdo->set_local_scale(localScale, false);
     return zdo;
 }
 

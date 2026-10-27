@@ -64,7 +64,7 @@ Prefab::Reference PrefabManager::get_prefab(avledet::util::Hash hash) const
 {
     auto prefab = find_prefab(hash);
     if (!prefab)
-        throw std::runtime_error("prefab not found");
+        throw std::runtime_error("prefab not found: " + std::to_string(hash));
     return std::ref(*prefab);
 }
 
@@ -95,7 +95,7 @@ Prefab::IndexType PrefabManager::get_prefab_index(avledet::util::Hash hash) cons
         // TODO must check-cast std::distance to uint16
         return std::distance(m_prefabs.begin(), itr);
     }
-    throw std::runtime_error("prefab not found");
+    throw std::runtime_error("prefab not found: " + std::to_string(hash));
     //assert(false);
     //throw std::runtime_error("nyi");
 }

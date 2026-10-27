@@ -70,6 +70,8 @@ class Heightmap;
 
 class ZoneManager : public avledet::util::IManager<ZoneManager>
 {
+    friend void probe_dump(char const *dir);// worldgen probe
+
     friend class NetManager;
     friend class ScriptManager;
 
@@ -121,7 +123,7 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
 
         std::int32_t m_spawnAttempts;// 200000 or 100000 depending on priority
         std::vector<Prefab::Instance> m_pieces;//TODO rename to views/prefab templates...?
-        std::vector<avledet::gen::RandomSpawn> m_random_spawns;
+        avledet::gen::Randoms m_randoms;
 
         bool operator==(Feature const &other) const
         {
@@ -190,6 +192,8 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
         bool m_inForest                      = false;
         float m_forestTresholdMin            = 0;
         float m_forestTresholdMax            = 1;
+        std::string m_name;                   // ZoneVegetation.m_name, alt biomes block by it
+        std::string m_altBiomeParent;         // only spawns in sectors with this alt biome
 
         Foliage(Prefab::Reference prefab) 
             : m_prefab(prefab) {}
@@ -329,6 +333,37 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
     void Update();
 
 #if AVL_IS_ON(AVL_ZONE_GENERATION)
+    // Vanilla Instantiate runs Awake of every component, some take UnityEngine.Random steps
+    // (counts measured into awake.json). WearNTear also draws the initial damage of pieces
+    // when the location has m_applyRandomDamage.
+    void AwakeRandom(VUtils::Random::State &state, ZDO &zdo, bool randomDamage) const;
+    // TerrainModifiers of a spawned networked prefab (rocks, roads) go live
+    void RegisterSpawned(ZDO &zdo, float scale = 1);
+    // visual TerrainModifiers and SnapToGround of a location proxy or a room instantiate
+    void RegisterVisuals(avledet::gen::Randoms const &randoms, avledet::gen::RollResult const &roll, Vector3f pos,
+                         Quaternion rot);
+    void AddSnapper(ZDO::reference zdo, float offset) { m_snappers.emplace_back(zdo, offset); }
+    // vanilla SnapToGround.SnappAll: with any snapper pending, regenerate the poked heightmaps and
+    // put the snappers on the ground
+    void SnappAll();
+
+  private:
+    struct AwakeDraws
+    {
+        int m_draws;
+        int m_drawsDamage;
+        int m_damageIndex;// -1 when Awake draws no damage
+        float m_health;
+    };
+    std::unordered_map<avledet::util::Hash, AwakeDraws> m_awakeDraws;
+    std::unordered_map<avledet::util::Hash, std::vector<TerrainMod>> m_prefabMods;
+    std::vector<std::pair<ZDO::reference, float>> m_snappers;
+    bool m_visualSnapper = false;
+
+  public:
+#endif
+
+#if AVL_IS_ON(AVL_ZONE_GENERATION)
     void PostGeoInit();
 #endif
 
@@ -347,6 +382,9 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
 
     // Get the client based icons for minimap
     std::list<std::reference_wrapper<Feature::Instance>> GetFeatureIcons();
+
+    // all placed location instances, used by the worldgen probe
+    auto const &generated_features() const { return m_generatedFeatures; }
 
     // Get world height at location
     float GetGroundHeight(Vector3f pos);

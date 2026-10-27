@@ -123,6 +123,18 @@ namespace avledet::util {
 
 	    double SingleCellular(double x, double y);
 
+        // 2D simplex, used by GetSimplexFractal (Ashlands heights)
+        double SingleSimplexFractalFBM(double x, double y);
+        double SingleSimplexFractalBillow(double x, double y);
+        double SingleSimplexFractalRigidMulti(double x, double y);
+        static double SingleSimplex(int seed, double x, double y);
+        static double GradCoord2D(int seed, int x, int y, double xd, double yd);
+
+        inline static int FastFloor(double f)
+        {
+            return f >= 0.0 ? (int)f : (int)f - 1;
+        }
+
     private:
         std::int32_t m_seed = 1337;
 
@@ -132,9 +144,11 @@ namespace avledet::util {
 
         int m_octaves = 3;
 
+        double m_lacunarity = 2.0;
+
         double m_gain = 0.5;
 
-        FractalType m_fractalType;
+        FractalType m_fractalType = FractalType::FBM;// C# default (first enum value)
 
         double m_fractalBounding {};
 

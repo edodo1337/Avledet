@@ -50,6 +50,33 @@ enum class ConnectionStatus : std::int32_t
     MAX// 13
 };
 
+// 1.0 SimulationDistance: zones a peer simulates around itself
+struct SimulationDistance
+{
+    std::int32_t m_near{};
+    std::int32_t m_far{};
+    bool m_classic{};
+
+    static const SimulationDistance ORIGINAL;
+
+    // same ordering as vanilla operator<
+    bool operator<(SimulationDistance const &rhs) const
+    {
+        if (m_near < rhs.m_near && m_far <= rhs.m_far)
+            return true;
+        if (m_near == rhs.m_near && m_far == rhs.m_far)
+            return !m_classic && rhs.m_classic;
+        return false;
+    }
+
+    SimulationDistance min(SimulationDistance const &rhs) const
+    {
+        return *this < rhs ? *this : rhs;
+    }
+};
+
+inline const SimulationDistance SimulationDistance::ORIGINAL{2, 2, true};
+
 class Peer : public std::enable_shared_from_this<Peer>,
              public avledet::rpc::RpcBase<std::shared_ptr<Peer>>
 // TODO replace with shared_ptr later...
@@ -92,6 +119,15 @@ class Peer : public std::enable_shared_from_this<Peer>,
             m_syncData;
 
     avledet::replay::XShare::Ptr m_replay_share;
+
+    // 1.0: PlayFab id (empty for Steam players) and agreed simulation distance
+    std::string m_playfabId;
+    SimulationDistance m_simDistance = SimulationDistance::ORIGINAL;
+
+    // Reads the distance a client wants, clamps it to the server one and
+    // replies with RPC_ValidatedSimulationDistance. Without the reply a 1.0
+    // client stays at (0,0) and loads no zones.
+    void SetSimDistance(DataReader &reader);
 
   private:
     void update();

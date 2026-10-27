@@ -105,3 +105,4 @@ build/
 
 data/lua/_bin/*
 .vscode/settings.json
+build-*/

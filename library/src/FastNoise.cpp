@@ -1,4 +1,5 @@
 #include "FastNoise.h"
+#include <cmath>
 #include <stdexcept>
 #include <cassert>
 
@@ -324,18 +325,112 @@ namespace avledet::util {
         switch (this->m_fractalType)
         {
         case FractalType::FBM:
-            //return this->SingleSimplexFractalFBM(x, y);
+            return this->SingleSimplexFractalFBM(x, y);
         case FractalType::Billow:
-            //return this->SingleSimplexFractalBillow(x, y);
+            return this->SingleSimplexFractalBillow(x, y);
         case FractalType::RigidMulti:
-            //return this->SingleSimplexFractalRigidMulti(x, y);
-            assert(false);
-            throw std::runtime_error("nyi");
+            return this->SingleSimplexFractalRigidMulti(x, y);
         default:
-            (void) x;
-            (void) y;
             return 0.0;
         }
+    }
+
+    double FastNoise::SingleSimplexFractalFBM(double x, double y)
+    {
+        int seed   = this->m_seed;
+        double sum = SingleSimplex(seed, x, y);
+        double amp = 1.0;
+        for (int i = 1; i < this->m_octaves; i++) {
+            x *= this->m_lacunarity;
+            y *= this->m_lacunarity;
+            amp *= this->m_gain;
+            sum += SingleSimplex(++seed, x, y) * amp;
+        }
+        return sum * this->m_fractalBounding;
+    }
+
+    double FastNoise::SingleSimplexFractalBillow(double x, double y)
+    {
+        int seed   = this->m_seed;
+        double sum = std::abs(SingleSimplex(seed, x, y)) * 2.0 - 1.0;
+        double amp = 1.0;
+        for (int i = 1; i < this->m_octaves; i++) {
+            x *= this->m_lacunarity;
+            y *= this->m_lacunarity;
+            amp *= this->m_gain;
+            sum += (std::abs(SingleSimplex(++seed, x, y)) * 2.0 - 1.0) * amp;
+        }
+        return sum * this->m_fractalBounding;
+    }
+
+    double FastNoise::SingleSimplexFractalRigidMulti(double x, double y)
+    {
+        int seed   = this->m_seed;
+        double sum = 1.0 - std::abs(SingleSimplex(seed, x, y));
+        double amp = 1.0;
+        for (int i = 1; i < this->m_octaves; i++) {
+            x *= this->m_lacunarity;
+            y *= this->m_lacunarity;
+            amp *= this->m_gain;
+            sum -= (1.0 - std::abs(SingleSimplex(++seed, x, y))) * amp;
+        }
+        return sum;
+    }
+
+    double FastNoise::GradCoord2D(int seed, int x, int y, double xd, double yd)
+    {
+        static constexpr double GRAD_2D[8][2] {
+            {-1.0, -1.0}, {1.0, -1.0}, {-1.0, 1.0}, {1.0, 1.0},
+            {0.0, -1.0},  {-1.0, 0.0}, {0.0, 1.0},  {1.0, 0.0}};
+
+        // C# int math wraps, so do it unsigned
+        std::uint32_t n = (std::uint32_t) seed;
+        n ^= 1619u * (std::uint32_t) x;
+        n ^= 31337u * (std::uint32_t) y;
+        n = n * n * n * 60493u;
+        auto h = (std::int32_t) n;
+        h = (h >> 13) ^ h;
+        auto &&g = GRAD_2D[h & 7];
+        return xd * g[0] + yd * g[1];
+    }
+
+    double FastNoise::SingleSimplex(int seed, double x, double y)
+    {
+        constexpr double F2 = 0.3660254037844386;
+        constexpr double G2 = 0.21132486540518713;
+
+        double t = (x + y) * F2;
+        int i    = FastFloor(x + t);
+        int j    = FastFloor(y + t);
+        t        = (double)(i + j) * G2;
+        double x0 = x - ((double)i - t);
+        double y0 = y - ((double)j - t);
+
+        int i1 = x0 > y0 ? 1 : 0;
+        int j1 = x0 > y0 ? 0 : 1;
+
+        double x1 = x0 - (double)i1 + G2;
+        double y1 = y0 - (double)j1 + G2;
+        double x2 = x0 - 1.0 + 0.42264973081037427;// same literal as vanilla, not 2*G2
+        double y2 = y0 - 1.0 + 0.42264973081037427;
+
+        double n0 = 0.0, n1 = 0.0, n2 = 0.0;
+        t = 0.5 - x0 * x0 - y0 * y0;
+        if (t >= 0.0) {
+            t *= t;
+            n0 = t * t * GradCoord2D(seed, i, j, x0, y0);
+        }
+        t = 0.5 - x1 * x1 - y1 * y1;
+        if (t >= 0.0) {
+            t *= t;
+            n1 = t * t * GradCoord2D(seed, i + i1, j + j1, x1, y1);
+        }
+        t = 0.5 - x2 * x2 - y2 * y2;
+        if (t >= 0.0) {
+            t *= t;
+            n2 = t * t * GradCoord2D(seed, i + 1, j + 1, x2, y2);
+        }
+        return 50.0 * (n0 + n1 + n2);
     }
 
     double FastNoise::GetCellular(double x, double y)

@@ -59,6 +59,7 @@ void DungeonManager::post_prefab_init()
         // Dungeon custom position
         {
             bool useTransform = pkg.read<bool>();
+            dungeon->m_use_custom_interior_transform = useTransform;
             if (useTransform) {
                 dungeon->m_interior_position = pkg.read<Vector3f>();
                 pkg.read<Quaternion>();// TODO
@@ -80,32 +81,22 @@ void DungeonManager::post_prefab_init()
                 throw std::runtime_error("bad read anchor");
             }
 
-            //Dungeon::DoorDef door;
-            auto doorName = pkg.read<std::string_view>();//Debug
-            (void) doorName;
-            auto doorHash = pkg.read<avledet::util::Hash>();
+            Dungeon::DoorDef door;
+            pkg.read<std::string_view>();// name, for debug
+            door.m_connection_type = pkg.read<std::string>();
+            door.m_chance          = pkg.read<float>();
 
-            //auto compHash = VUtils::get_stable_hash(doorName);
-            //if (doorHash != compHash) {
-            //    throw std::runtime_error("dg door hash unequal to computed");
-            //}
-
-            auto door_prefab = PrefabManager::instance().find_prefab(doorHash);
-            if (!door_prefab) {
-                throw std::runtime_error("dungeon door missing prefab");
+            auto viewCount = pkg.read<std::int32_t>();
+            for (int i3 = 0; i3 < viewCount; i3++) {
+                Prefab::Instance view;
+                view.m_prefabHash = pkg.read<avledet::util::Hash>();
+                view.m_pos        = pkg.read<Vector3f>();
+                view.m_rot        = pkg.read<Quaternion>();
+                view.get_prefab();// ensure prefab existence
+                door.m_views.push_back(view);
             }
 
-            auto connection_type = pkg.read<std::string>();
-            auto chance          = pkg.read<float>();
-
-            //Dungeon::DoorDef door(*door_prefab, connection_type, chance);
-
-            //door.m_prefab = *door_prefab;
-            //door.m_connection_type = pkg.read<std::string>();
-            //door.m_chance          = pkg.read<float>();
-
-            //dungeon->m_door_types.push_back(door);
-            dungeon->m_door_types.emplace_back(*door_prefab, std::move(connection_type), chance);
+            dungeon->m_door_types.push_back(std::move(door));
         }
 
         dungeon->m_grid_size          = pkg.read<std::int32_t>();
@@ -121,6 +112,11 @@ void DungeonManager::post_prefab_init()
         dungeon->m_spawn_chance = pkg.read<float>();
         dungeon->m_themes       = pkg.read<avledet::util::Theme>();
         dungeon->m_tile_width   = pkg.read<float>();
+
+        dungeon->m_zone_size                     = pkg.read<Vector3f>();
+        dungeon->m_generator_original_position   = pkg.read<Vector3f>();
+        dungeon->m_add_base_seed_to_random_spawn = pkg.read<bool>();
+        dungeon->m_generator_custom_interior     = pkg.read<bool>();
 
         auto roomCount = pkg.read<std::int32_t>();
         for (int i2 = 0; i2 < roomCount; i2++) {
@@ -179,6 +175,7 @@ void DungeonManager::post_prefab_init()
                 instance.m_prefabHash = pkg.read<avledet::util::Hash>();
                 instance.m_pos        = pkg.read<Vector3f>();
                 instance.m_rot        = pkg.read<Quaternion>();
+                instance.m_scale      = pkg.read<Vector3f>();
 
                 // Write NV RandomSpawn
 
@@ -189,7 +186,7 @@ void DungeonManager::post_prefab_init()
             }
 
             // RandomSpawn list parsing
-            room->m_random_spawns = avledet::gen::RandomSpawn::parse_list(pkg);
+            room->m_randoms = avledet::gen::Randoms::parse(pkg);
 
             dungeon->m_available_rooms.push_back(std::move(room));
         }
@@ -197,6 +194,9 @@ void DungeonManager::post_prefab_init()
         avledet::util::Hash hash = dungeon->m_prefab.get().m_hash;
         m_dungeons.insert({hash, std::move(dungeon)});
     }
+
+    if (pkg.get_pos() != pkg.size())
+        throw std::runtime_error("dungeons.pkg has unread bytes, format mismatch");
 
     LOG_NOTICE(AVL_LOGGER, "Loaded {} dungeons", count);
 }
@@ -311,9 +311,9 @@ ZDO::reference DungeonManager::generate(Dungeon const &dungeon, Vector3f pos, Qu
     return zdo;
 }
 
-void DungeonManager::generate(Dungeon const &dungeon, ZDO::reference zdo)
+void DungeonManager::generate(Dungeon const &dungeon, ZDO::reference zdo, bool randomDamage)
 {
-    DungeonGenerator(dungeon, zdo).Generate();
+    DungeonGenerator(dungeon, zdo, randomDamage).Generate();
 }
 
 /*

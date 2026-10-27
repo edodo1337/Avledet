@@ -19,7 +19,7 @@ World::World(std::string name, std::string seedName)
 {
     m_name            = std::move(name);
     m_seedName        = std::move(seedName);
-    m_seed            = avledet::util::get_stable_hash(seedName);
+    m_seed            = avledet::util::get_stable_hash(m_seedName);// seedName is moved-from here
     m_uid             = VUtils::Random::GenerateUID();
     m_worldGenVersion = VConstants::WORLDGEN;
 }

@@ -1,3 +1,4 @@
+#include <array>
 #include "RandomSpawn.h"
 #include "Types.h"
 #include "Vector.h"
@@ -18,6 +19,10 @@
 #include <numeric>
 #include <vector>
 #include "ZoneManager.h"
+#include "AltBiomes.h"
+#include <fstream>
+#include <optional>
+#include <nlohmann/json.hpp>
 
 // private
 void ZoneManager::PostPrefabInit()
@@ -98,20 +103,21 @@ void ZoneManager::PostPrefabInit()
                        == piece.m_prefabHash);//TODO dont use debug assert
                 piece.m_pos = pkg.read<Vector3f>();
                 piece.m_rot = pkg.read<Quaternion>();
+                piece.m_scale = pkg.read<Vector3f>();
 
                 piece.get_prefab();
 
                 loc->m_pieces.push_back(piece);
             }
 
-            // RandomSpawn defs/refs
-            loc->m_random_spawns = avledet::gen::RandomSpawn::parse_list(pkg);
+            loc->m_randoms = avledet::gen::Randoms::parse(pkg);
 
             //m_featuresByHash.insert({ loc->m_hash, *loc.get() });
             m_features.push_back(std::move(loc));
         }
 
-        assert(pkg.get_pos() == pkg.size());
+        if (pkg.get_pos() != pkg.size())
+            throw std::runtime_error("pkg has unread bytes, format mismatch");
 
         LOG_NOTICE(AVL_LOGGER, "Loaded {} features", count);
 #endif
@@ -177,13 +183,55 @@ void ZoneManager::PostPrefabInit()
             veg->m_surroundCheckDistance        = pkg.read<float>();            // TODO
             veg->m_surroundCheckLayers          = pkg.read<std::int32_t>();     // TODO
             veg->m_surroundBetterThanAverage    = pkg.read<float>();            // TODO
+            veg->m_minDistanceFromCenter        = pkg.read<float>();
+            veg->m_maxDistanceFromCenter        = pkg.read<float>();
+            veg->m_name                         = pkg.read<std::string>();
+            veg->m_altBiomeParent               = pkg.read<std::string>();
 
             m_foliage.push_back(std::move(veg));
         }
 
-        assert(pkg.get_pos() == pkg.size());
+        if (pkg.get_pos() != pkg.size())
+            throw std::runtime_error("pkg has unread bytes, format mismatch");
 
         LOG_NOTICE(AVL_LOGGER, "Loaded {} vegetation", count);
+
+        std::ifstream awakeIn("awake.json");
+        if (!awakeIn)
+            throw std::runtime_error("awake.json missing (dumped from the 1.0 server)");
+        auto awake = nlohmann::json::parse(awakeIn);
+        for (auto &&[name, j] : awake.at("prefabs").items()) {
+            auto &&draws = j.at("draws");
+            m_awakeDraws[avledet::util::get_stable_hash(name)]
+                    = AwakeDraws {draws[0], draws[3], j.at("damageIndex"), j.at("health")};
+        }
+
+        std::ifstream modsIn("prefab_terrainmods.json");
+        if (!modsIn)
+            throw std::runtime_error("prefab_terrainmods.json missing (dumped from the 1.0 server)");
+        auto mods = nlohmann::json::parse(modsIn);
+        for (auto &&[name, list] : mods.items()) {
+            auto &&out = m_prefabMods[avledet::util::get_stable_hash(name)];
+            for (auto &&j : list) {
+                TerrainMod m;
+                m.m_sortOrder          = j.at("sortOrder");
+                m.m_playerModification = j.at("player");
+                m.m_levelOffset        = j.at("levelOffset");
+                m.m_level              = j.at("level");
+                m.m_levelRadius        = j.at("levelRadius");
+                m.m_square             = j.at("square");
+                m.m_smooth             = j.at("smooth");
+                m.m_smoothRadius       = j.at("smoothRadius");
+                m.m_smoothPower        = j.at("smoothPower");
+                m.m_paintCleared       = j.at("paint");
+                m.m_paintType          = (TerrainModifier::PaintType) j.at("paintType").get<int>();
+                m.m_paintRadius        = j.at("paintRadius");
+                m.m_paintHeightCheck   = j.at("paintHeightCheck");
+                m.m_paintStrength      = j.at("paintStrength");
+                m.m_pos = Vector3f(j.at("pos")[0].get<float>(), j.at("pos")[1].get<float>(), j.at("pos")[2].get<float>());
+                out.push_back(m);
+            }
+        }
 #endif
     }
 
@@ -243,7 +291,8 @@ void ZoneManager::PostPrefabInit()
 #endif
                              });
 
-    RouteManager::instance().Register("Ping", [](Peer::Ptr peer, float time) {
+    // 1.0 renamed Ping/Pong to RPC_Ping/RPC_Pong
+    RouteManager::instance().Register("RPC_Ping", [](Peer::Ptr peer, float time) {
         peer->Route(avledet::util::hashes::Routed::Pong, time);
     });
 }
@@ -563,6 +612,9 @@ void ZoneManager::PopulateZone(Heightmap &heightmap)
     if (AVL_CONFIG.m_world_gen_creatures) {
         ZdoManager::instance().Instantiate(*ZONE_CTRL_PREFAB, ZoneToWorldPos(heightmap.get_zone()));
     }
+
+    // vanilla regenerates the heightmaps poked by new modifiers (rocks) in a later LateUpdate
+    HeightmapManager::instance().ForceGenerateAll();
     //#endif // AVL_OPTION_ENABLE_ZONE_GENERATION
 }
 
@@ -580,6 +632,20 @@ Vector3f ZoneManager::GetRandomPointInRadius(VUtils::Random::State &state, Vecto
 }
 
 // private
+// vanilla 1.0: alt biome only vegetation needs its alt biome in the sector, alt biomes can block by name
+static bool AltBiomesAllow(ZoneManager::Foliage const &veg, Vector3f p)
+{
+    bool parentFound = veg.m_altBiomeParent.empty();
+    for (auto &&alt : AltBiomeManager::instance().GetBiomeSector(p.x, p.z).m_altBiomes) {
+        if (alt->m_name == veg.m_altBiomeParent)
+            parentFound = true;
+        auto &&names = alt->m_blockVegetationNames;
+        if (std::find(names.begin(), names.end(), veg.m_name) != names.end())
+            return false;
+    }
+    return parentFound;
+}
+
 void ZoneManager::PopulateFoliage(Heightmap &heightmap, std::vector<ClearArea> const &clearAreas)
 {
     auto &&zoneID = heightmap.get_zone();
@@ -629,6 +695,9 @@ void ZoneManager::PopulateFoliage(Heightmap &heightmap, std::vector<ClearArea> c
 
             Vector3f basePos(vx, 0., vz);
 
+            if (!AltBiomesAllow(*zoneVegetation, basePos))
+                continue;
+
             auto const groupCount
                     = state.range(zoneVegetation->m_groupSizeMin, zoneVegetation->m_groupSizeMax + 1);
             bool generated = false;
@@ -660,8 +729,9 @@ void ZoneManager::PopulateFoliage(Heightmap &heightmap, std::vector<ClearArea> c
 
                     if (!((std::to_underlying(zoneVegetation->m_biome) & std::to_underlying(biome))
                           && (std::to_underlying(zoneVegetation->m_biomeArea)
-                              & std::to_underlying(biomeArea))))
+                              & std::to_underlying(biomeArea)))) {
                         continue;
+                    }
 
                     // so, TODO
                     //  make *some* or certain vegetation spawn really high up if a tall spire is in radius
@@ -680,8 +750,9 @@ void ZoneManager::PopulateFoliage(Heightmap &heightmap, std::vector<ClearArea> c
 
                     float waterDiff = pos.y - WATER_LEVEL;
                     if (waterDiff < zoneVegetation->m_minAltitude
-                        || waterDiff > zoneVegetation->m_maxAltitude)
+                        || waterDiff > zoneVegetation->m_maxAltitude) {
                         continue;
+                    }
 
                     // Mistlands only
                     // TODO might be affecting mist (probably is? just a hunch)
@@ -751,7 +822,7 @@ void ZoneManager::PopulateFoliage(Heightmap &heightmap, std::vector<ClearArea> c
                                 for (int l = 0; l < 6; l++)
                                 {
                                     float num19 = (float)l / 6.0f * 3.1415927f * 2.0f;
-                                    float vegetationMask2 = heightmap.GetVegetationMask(pos + Vector3f(std::sin(num19) * num18, 0.0f, std::cos(num19) * num18));
+                                    float vegetationMask2 = otherHeightmap.GetVegetationMask(pos + Vector3f(std::sin(num19) * num18, 0.0f, std::cos(num19) * num18));
                                     float num20 = (1.0f - num18) / (zoneVegetation->m_surroundCheckDistance * 2.0f);
                                     num17 += vegetationMask2 * num20;
                                 }
@@ -774,8 +845,8 @@ void ZoneManager::PopulateFoliage(Heightmap &heightmap, std::vector<ClearArea> c
                         if (!InsideClearArea(clearAreas, pos)
                             // Do NOT remove the below
                             //  These are MY CUSTOM checks to compensate for lack of unity physics...
-                            && (zoneVegetation->m_radius == 0
-                                || !OverlapsClearArea(placedAreas, pos, zoneVegetation->m_radius)))// custom
+                            && (zoneVegetation->m_radius == 0 || !zoneVegetation->m_blockCheck
+                                || !OverlapsClearArea(placedAreas, pos, zoneVegetation->m_radius)))// custom, only where vanilla IsBlocked runs
                         {
 
                             if (zoneVegetation->m_snapToWater)
@@ -805,9 +876,13 @@ void ZoneManager::PopulateFoliage(Heightmap &heightmap, std::vector<ClearArea> c
                             if (zoneVegetation->m_radius > 0)
                                 placedAreas.push_back({pos, zoneVegetation->m_radius});
 
-                            if (scale != zoneVegetation->m_prefab.get().m_localScale.x) {
+                            // vanilla SetLocalScale, synced only with m_syncInitialScale
+                            if (scale != zoneVegetation->m_prefab.get().m_localScale.x
+                                && zoneVegetation->m_prefab.get().AllFlagsPresent(Prefab::Flag::SYNC_INITIAL_SCALE)) {
                                 zdo->set_local_scale(Vector3f(scale, scale, scale), true);
                             }
+                            AwakeRandom(state, *zdo, false);
+                            RegisterSpawned(*zdo, scale);
 
                             generated = true;
                         }
@@ -951,224 +1026,183 @@ void ZoneManager::PostGeoInit()
 }
 
 // private
+// Location placement as in vanilla 1.0 (ZoneSystem.GenerateLocationsTimeSliced):
+// zones come from random biome grid points, 6 tries per zone, alt biome checks.
 void ZoneManager::PrepareFeatures(Feature const &feature)
 {
-    int spawnedLocations = 0;
+    auto &&geo = GeoManager::instance();
+    auto &&alt = AltBiomeManager::instance();
 
-    // CountNrOfLocation: inlined
-    for (auto &&inst : m_generatedFeatures) {
-        if (inst.second->m_feature.get() == feature)// better to compare locations itself rather than name
-            spawnedLocations++;
-    }
+    int placed = 0;
+    for (auto &&inst : m_generatedFeatures)
+        if (inst.second->m_feature.get() == feature)
+            placed++;
 
-    unsigned int errLocations       = 0;
-    unsigned int errCenterDistances = 0;
-    unsigned int errNoneBiomes      = 0;
-    unsigned int errBiomeArea       = 0;
-    unsigned int errAltitude        = 0;
-    unsigned int errForestFactor    = 0;
-    //unsigned int errSimilarLocation = 0;
-    unsigned int errorSimilar       = 0;
-    unsigned int errorNotSimilar    = 0;
-    unsigned int errTerrainDelta    = 0;
-    unsigned int errorVegetation    = 0;
+    if (feature.m_unique && placed > 0)
+        return;
 
-    VUtils::Random::State state(GeoManager::instance().GetSeed() + feature.m_hash);
-    float const locationRadius = std::max(feature.m_exteriorRadius, feature.m_interiorRadius);
+    auto meta = alt.GetLocationMeta(feature.m_name);
+    std::string_view locName   = meta ? std::string_view(meta->m_name) : std::string_view(feature.m_name);
+    std::string_view altParent = meta ? std::string_view(meta->m_altBiomeParent) : std::string_view();
 
-    float range = feature.m_centerFirst ? feature.m_minDistance : 10000;
+    VUtils::Random::State state(geo.GetSeed() + feature.m_hash);
+    float const maxRadius = std::max(feature.m_exteriorRadius, feature.m_interiorRadius);
+    // m_spawnAttempts holds 200000 for prioritized locations (pkg format)
+    int const attempts    = feature.m_spawnAttempts == 200000 ? 60000 : 12000;
+    float maxRange        = feature.m_centerFirst ? feature.m_minDistance : 10000.0f;
 
-    std::vector<float> s_tempVeg;
+    std::vector<float> tempVeg;
 
-    for (int a = 0; a < feature.m_spawnAttempts && spawnedLocations < feature.m_quantity; a++) {
-        auto randomZone = GetRandomZone(state, range);
+    // reject counters, same buckets as the vanilla debug log
+    enum { InZone, Generated, Area, CenterDist, Biome, Altitude, Forest, FromCenter, Delta, Similar,
+           NotSimilar, Veg, AltMissing, AltBlock, Surround, COUNT };
+    std::array<int, COUNT> err {};
+
+    for (int a = 0; a < attempts && placed < feature.m_quantity; a++) {
+        ZoneID zone;
         if (feature.m_centerFirst) {
-            range++;
+            zone = GetRandomZone(state, maxRange);
+            maxRange += 1.0f;
+        } else {
+            auto point = feature.m_minAltitude < 0.0f
+                    ? alt.GetRandomPointByBiomes(state, std::to_underlying(feature.m_biome))
+                    : alt.GetRandomPointByBiomesAboveSeaLevel(state, std::to_underlying(feature.m_biome));
+            zone = WorldToZonePos(Vector3f(AltBiomeManager::MapSpaceToWorldSpace(point.x), 0.0f,
+                                           AltBiomeManager::MapSpaceToWorldSpace(point.y)));
         }
 
-        if (m_generatedFeatures.contains(randomZone)) {
-            errLocations++;
-        } else {
-            auto zonePos                       = ZoneToWorldPos(randomZone);
-            avledet::util::BiomeArea biomeArea = GeoManager::instance().GetBiomeArea(zonePos);
+        if (m_generatedFeatures.contains(zone)) {
+            err[InZone]++;
+            continue;
+        }
+        // IsZoneGenerated: a new world has no generated zones yet
+        if (m_generatedZones.contains(zone)) {
+            err[Generated]++;
+            continue;
+        }
 
-            if (!(std::to_underlying(feature.m_biomeArea) & std::to_underlying(biomeArea))) {
-                errBiomeArea++;
-            } else {
-                for (int i = 0; i < 20; i++) {
-                    auto randomPointInZone = GetRandomPointInZone(state, randomZone, locationRadius);
+        auto biomeArea = geo.GetBiomeArea(ZoneToWorldPos(zone));
+        if (!(std::to_underlying(feature.m_biomeArea) & std::to_underlying(biomeArea))) {
+            err[Area]++;
+            continue;
+        }
 
-                    float magnitude = randomPointInZone.magnitude();
-                    if ((feature.m_minDistance != 0 && magnitude < feature.m_minDistance)
-                        || (feature.m_maxDistance != 0 && magnitude > feature.m_maxDistance)) {
-                        errCenterDistances++;
-                    } else {
-                        avledet::util::Biome biome = GeoManager::instance().GetBiome(randomPointInZone);
+        for (int j = 0; j < 6; j++) {
+            auto p = GetRandomPointInZone(state, zone, maxRadius);
 
-                        if (!(std::to_underlying(biome) & std::to_underlying(feature.m_biome)))
-                            errNoneBiomes++;
-                        else {
-                            avledet::util::Color color;
-                            randomPointInZone.y
-                                    = GeoManager::instance().GetHeight(randomPointInZone.x, randomPointInZone.z, color);
-                            float waterDiff = randomPointInZone.y - WATER_LEVEL;
-                            if (waterDiff < feature.m_minAltitude || waterDiff > feature.m_maxAltitude)
-                                errAltitude++;
-                            else {
-                                if (feature.m_inForest) {
-                                    float forestFactor = GeoManager::instance().GetForestFactor(randomPointInZone);
-                                    if (forestFactor < feature.m_forestTresholdMin
-                                        || forestFactor > feature.m_forestTresholdMax) {
-                                        errForestFactor++;
-                                        continue;
-                                    }
-                                }
+            float magnitude = p.magnitude();
+            if ((feature.m_minDistance != 0.0f && magnitude < feature.m_minDistance)
+                || (feature.m_maxDistance != 0.0f && magnitude > feature.m_maxDistance)) {
+                err[CenterDist]++;
+                continue;
+            }
 
-                                if (feature.m_minDistanceFromCenter > 0.0f || feature.m_maxDistanceFromCenter > 0.0f) {
-                                    //Utils.LengthXZ(randomPointInZone);
-                                    float num4 = Vector2f(randomPointInZone.x, randomPointInZone.z).magnitude();
-                                    if ((feature.m_minDistanceFromCenter > 0.0f && num4 < feature.m_minDistanceFromCenter) || (feature.m_maxDistanceFromCenter > 0.0f && num4 > feature.m_maxDistanceFromCenter))
-                                    {
-                                        continue;
-                                    }
-                                }
+            auto biome = geo.GetBiome(p);
+            if (!(std::to_underlying(feature.m_biome) & std::to_underlying(biome))) {
+                err[Biome]++;
+                continue;
+            }
 
-                                float delta = 0;
-                                Vector3f vector;
-                                GeoManager::instance().GetTerrainDelta(state, randomPointInZone,
-                                                              feature.m_exteriorRadius, delta, vector);
-                                
-                                if (delta > feature.m_maxTerrainDelta || delta < feature.m_minTerrainDelta) {
-                                    errTerrainDelta++;
-                                } 
-                                else if (feature.m_minDistanceFromSimilar > 0.0f && HaveLocationInRange(feature, feature.m_group, randomPointInZone, feature.m_minDistanceFromSimilar, false))
-                                {
-                                    errorSimilar++;
-                                }
-                                else if (feature.m_maxDistanceFromSimilar > 0.0f && !HaveLocationInRange(feature, feature.m_groupMax, randomPointInZone, feature.m_maxDistanceFromSimilar, true))
-                                {
-                                    errorNotSimilar++;
-                                } else {
+            avledet::util::Color mask;
+            p.y = geo.GetHeight(p.x, p.z, mask);
+            float altitude = (float) ((double) p.y - 30.0);
+            if (altitude < feature.m_minAltitude || altitude > feature.m_maxAltitude) {
+                err[Altitude]++;
+                continue;
+            }
 
-                                    float a = color.a;
-                                    if (feature.m_minimumVegetation > 0.0f && a <= feature.m_minimumVegetation)
-                                    {
-                                        errorVegetation++;
-                                    }
-                                    else
-                                    {
-                                        if (feature.m_maximumVegetation >= 1.0f || a < feature.m_maximumVegetation)
-                                        {
-                                            if (feature.m_surroundCheckVegetation)
-                                            {
-                                                float num6 = 0.0f;
-                                                for (int k = 0; k < feature.m_surroundCheckLayers; k++)
-                                                {
-                                                    float num7 = (float)(k + 1) / (float)feature.m_surroundCheckLayers * feature.m_surroundCheckDistance;
-                                                    for (int l = 0; l < 6; l++)
-                                                    {
-                                                        float num8 = (float)l / 6.0f * 3.1415927f * 2.0f;
-                                                        Vector3f vector2 = randomPointInZone + Vector3f(std::sin(num8) * num7, 0.0f, std::cos(num8) * num7);
-                                                        avledet::util::Color color2;
-                                                        GeoManager::instance().GetHeight(vector2.x, vector2.z, color2);
-                                                        float num9 = (feature.m_surroundCheckDistance - num7) / (feature.m_surroundCheckDistance * 2.0f);
-                                                        num6 += color2.a * num9;
-                                                    }
-                                                }
-                                                s_tempVeg.push_back(num6);
-                                                if (s_tempVeg.size() < 10)
-                                                {
-                                                    continue;
-                                                }
-                                                float vmax = *std::max_element(s_tempVeg.begin(), s_tempVeg.end());
-                                                //float = this.s_tempVeg.Average();
-                                                float vmean = /* this. */std::accumulate(s_tempVeg.begin(), s_tempVeg.end(), 0.0f) / (float)s_tempVeg.size();
-                                                //float num12 = num11 + (num21 - num22) * zoneVegetation->m_surroundBetterThanAverage;
-
-                                                //float num10 = s_tempVeg.Max();
-                                                //float num11 = this.s_tempVeg.Average();
-                                                float num12 = vmean + (vmax - vmean) * feature.m_surroundBetterThanAverage;
-                                                if (num6 < num12)
-                                                {
-                                                    continue;
-                                                }
-                                                //ZLog.DevLog(string.Format("Surround check passed with a value of {0}, cutoff was {1}, max: {2}, average: {3}.", new object[] { num6, num12, num10, num11 }));
-                                            }
-
-                                            /**
-                                                VEGETATION PLACEMENT SUCCESS
-                                            */
-
-                                            //this.RegisterLocation(location, randomPointInZone, false);
-                                            //num2 = placed + 1;
-                                            //placed = num2;
-                                            //break;
-
-                                            auto zone = WorldToZonePos(randomPointInZone);
-
-                                            m_generatedFeatures[zone] = std::make_unique<Feature::Instance>(
-                                                    feature, randomPointInZone);
-
-                                            spawnedLocations++;
-                                            break;
-                                        }
-                                        errorVegetation++;
-                                    }
-
-                                }
-
-/*                                 else
-                                {
-                                else {
-                                    if (feature.m_minDistanceFromSimilar <= 0
-                                        || !HaveLocationInRange(feature, randomPointInZone)) {
-                                        auto zone = WorldToZonePos(randomPointInZone);
-
-                                        m_generatedFeatures[zone] = std::make_unique<Feature::Instance>(
-                                                feature, randomPointInZone);
-
-                                        spawnedLocations++;
-                                        break;
-                                    }
-                                    errSimilarLocation++;
-                                } */
-                                
-                                
-/*                                 if (delta > feature.m_maxTerrainDelta || delta < feature.m_minTerrainDelta) {
-                                    errTerrainDelta++;
-                                } else {
-                                    if (feature.m_minDistanceFromSimilar <= 0
-                                        || !HaveLocationInRange(feature, randomPointInZone)) {
-                                        auto zone = WorldToZonePos(randomPointInZone);
-
-                                        m_generatedFeatures[zone] = std::make_unique<Feature::Instance>(
-                                                feature, randomPointInZone);
-
-                                        spawnedLocations++;
-                                        break;
-                                    }
-                                    errSimilarLocation++;
-                                } */
-                            }
-                        }
-                    }
+            if (feature.m_inForest) {
+                float forest = geo.GetForestFactor(p);
+                if (forest < feature.m_forestTresholdMin || forest > feature.m_forestTresholdMax) {
+                    err[Forest]++;
+                    continue;
                 }
             }
+
+            if (feature.m_minDistanceFromCenter > 0.0f || feature.m_maxDistanceFromCenter > 0.0f) {
+                float d = Vector2f(p.x, p.z).magnitude();
+                if ((feature.m_minDistanceFromCenter > 0.0f && d < feature.m_minDistanceFromCenter)
+                    || (feature.m_maxDistanceFromCenter > 0.0f && d > feature.m_maxDistanceFromCenter)) {
+                    err[FromCenter]++;
+                    continue;
+                }
+            }
+
+            float delta = 0;
+            Vector3f slope;
+            geo.GetTerrainDelta(state, p, feature.m_exteriorRadius, delta, slope);
+            if (delta > feature.m_maxTerrainDelta || delta < feature.m_minTerrainDelta) {
+                err[Delta]++;
+                continue;
+            }
+
+            if (feature.m_minDistanceFromSimilar > 0.0f
+                && HaveLocationInRange(feature, feature.m_group, p, feature.m_minDistanceFromSimilar, false)) {
+                err[Similar]++;
+                continue;
+            }
+            if (feature.m_maxDistanceFromSimilar > 0.0f
+                && !HaveLocationInRange(feature, feature.m_groupMax, p, feature.m_maxDistanceFromSimilar, true)) {
+                err[NotSimilar]++;
+                continue;
+            }
+
+            if ((feature.m_minimumVegetation > 0.0f && mask.a <= feature.m_minimumVegetation)
+                || (feature.m_maximumVegetation < 1.0f && mask.a >= feature.m_maximumVegetation)) {
+                err[Veg]++;
+                continue;
+            }
+
+            auto &&sector = alt.GetBiomeSector(p.x, p.z);
+            if (!altParent.empty()
+                && std::none_of(sector.m_altBiomes.begin(), sector.m_altBiomes.end(),
+                                [&](AltBiome const *b) { return b->m_name == altParent; })) {
+                err[AltMissing]++;
+                continue;
+            }
+            if (std::any_of(sector.m_altBiomes.begin(), sector.m_altBiomes.end(), [&](AltBiome const *b) {
+                    return std::find(b->m_blockLocationNames.begin(), b->m_blockLocationNames.end(), locName)
+                        != b->m_blockLocationNames.end();
+                })) {
+                err[AltBlock]++;
+                continue;
+            }
+
+            if (feature.m_surroundCheckVegetation) {
+                float score = 0.0f;
+                for (int k = 0; k < feature.m_surroundCheckLayers; k++) {
+                    float dist = (float) (k + 1) / (float) feature.m_surroundCheckLayers * feature.m_surroundCheckDistance;
+                    for (int l = 0; l < 6; l++) {
+                        float f = (float) l / 6.0f * 3.1415927f * 2.0f;
+                        Vector3f v = p + Vector3f(std::sin(f) * dist, 0.0f, std::cos(f) * dist);
+                        avledet::util::Color mask2;
+                        geo.GetHeight(v.x, v.z, mask2);
+                        float w = (feature.m_surroundCheckDistance - dist) / (feature.m_surroundCheckDistance * 2.0f);
+                        score += mask2.a * w;
+                    }
+                }
+                tempVeg.push_back(score);
+                if (tempVeg.size() < 10)
+                    continue;
+                float vmax  = *std::max_element(tempVeg.begin(), tempVeg.end());
+                float vmean = std::accumulate(tempVeg.begin(), tempVeg.end(), 0.0f) / (float) tempVeg.size();
+                if (score < vmean + (vmax - vmean) * feature.m_surroundBetterThanAverage)
+                    continue;
+            }
+
+            m_generatedFeatures[WorldToZonePos(p)] = std::make_unique<Feature::Instance>(feature, p);
+            placed++;
+            break;
         }
     }
 
-    if (spawnedLocations < feature.m_quantity) {
-        LOG_WARNING(AVL_LOGGER, "Failed to place all {}, placed {}/{}", feature.m_name, spawnedLocations,
-                    feature.m_quantity);
-
-        //LOG(ERROR) << "errLocations " << errLocations;
-        //LOG(ERROR) << "errCenterDistances " << errCenterDistances;
-        //LOG(ERROR) << "errNoneBiomes " << errNoneBiomes;
-        //LOG(ERROR) << "errBiomeArea " << errBiomeArea;
-        //LOG(ERROR) << "errAltitude " << errAltitude;
-        //LOG(ERROR) << "errForestFactor " << errForestFactor;
-        //LOG(ERROR) << "errSimilarLocation " << errSimilarLocation;
-        //LOG(ERROR) << "errTerrainDelta " << errTerrainDelta;
+    if (placed < feature.m_quantity) {
+        LOG_WARNING(AVL_LOGGER,
+                    "Failed to place all {}, placed {}/{} (inZone {} area {} centerDist {} biome {} altitude {} forest {} "
+                    "fromCenter {} delta {} similar {} notSimilar {} veg {} altMissing {} altBlock {})",
+                    feature.m_name, placed, feature.m_quantity, err[InZone], err[Area], err[CenterDist], err[Biome],
+                    err[Altitude], err[Forest], err[FromCenter], err[Delta], err[Similar], err[NotSimilar], err[Veg],
+                    err[AltMissing], err[AltBlock]);
     }
 }
 
@@ -1234,10 +1268,10 @@ std::vector<ZoneManager::ClearArea> ZoneManager::TryGenerateFeature(ZoneID zoneI
         auto &&location         = locationInstance->m_feature.get();
 
         Vector3f position = locationInstance->m_pos;
-        //Vector3f vector;
-        //avledet::util::Biome biome;
-        //BiomeArea biomeArea;
-        //Heightmap *heightmap = GetGroundData(position, vector, biome, biomeArea);
+        Vector3f normal;
+        avledet::util::Biome biome;
+        avledet::util::BiomeArea biomeArea;
+        GetGroundData(position, normal, biome, biomeArea);
 
         // m_snapToWater is Mistlands only
         if (location.m_snapToWater)
@@ -1246,24 +1280,19 @@ std::vector<ZoneManager::ClearArea> ZoneManager::TryGenerateFeature(ZoneID zoneI
         if (location.m_clearArea)
             clearAreas.push_back({position, location.m_exteriorRadius});
 
+        // vanilla takes both from the unseeded global random; seeded here like the location,
+        // the vanilla probe does the same with PROBE_SEEDED_ROTATION=1
+        VUtils::Random::State random(GeoManager::instance().GetSeed() + zoneID.x * 4271 + zoneID.y * 9187);
         Quaternion rot;
-
-        // slopeRotation is Mistlands only
-        //if (locationInstance.m_feature->m_slopeRotation) {
-        //    float num;
-        //    Vector3f vector2;
-        //    GetTerrainDelta(position, locationInstance.m_feature->m_exteriorRadius, num, vector2);
-        //    Vector3f forward(vector2.x, 0.f, vector2.z);
-        //    forward.Normalize();
-        //    rot = Quaternion::look_rotation(forward);
-        //    assert(false);
-        //    //Vector3f euler_angles = rot.euler_angles;
-        //    //euler_angles.y = round(euler_angles.y / 22.5f) * 22.5f;
-        //    //rot.euler_angles = euler_angles;
-        //}
-
-        if (location.m_randomRotation) {
-            rot = Quaternion::euler(0, VUtils::Random::State().range(0, 16) * 22.5f, 0);
+        if (location.m_slopeRotation) {
+            // face down the slope, snapped to 22.5 degrees
+            float delta;
+            Vector3f slope;
+            GetTerrainDelta(random, position, location.m_exteriorRadius, delta, slope);
+            float yaw = std::atan2(slope.x, slope.z) * (float) (180.0 / VUtils::PI);
+            rot = Quaternion::euler(0, std::round(yaw / 22.5f) * 22.5f, 0);
+        } else if (location.m_randomRotation) {
+            rot = Quaternion::euler(0, random.range(0, 16) * 22.5f, 0);
         }
 
         avledet::util::Hash seed = GeoManager::instance().GetSeed() + zoneID.x * 4271 + zoneID.y * 9187;
@@ -1304,46 +1333,132 @@ void ZoneManager::RemoveUngeneratedFeatures(Feature const &feature)
 }
 
 // private
+void ZoneManager::AwakeRandom(VUtils::Random::State &state, ZDO &zdo, bool randomDamage) const
+{
+    auto itr = m_awakeDraws.find(zdo.get_prefab().get().m_hash);
+    if (itr == m_awakeDraws.end())
+        return;
+
+    auto &&d = itr->second;
+    int skip = randomDamage ? d.m_drawsDamage : d.m_draws;
+    if (randomDamage && d.m_damageIndex >= 0) {
+        for (int i = 0; i < d.m_damageIndex; i++)
+            state.next_float();
+        zdo.set(avledet::util::hashes::ZDO::WearNTear::HEALTH, state.range(0.1f * d.m_health, d.m_health * 0.6f));
+        skip -= d.m_damageIndex + 1;
+    }
+    for (int i = 0; i < skip; i++)
+        state.next_float();
+}
+
+void ZoneManager::RegisterSpawned(ZDO &zdo, float scale)
+{
+    auto itr = m_prefabMods.find(zdo.get_prefab().get().m_hash);
+    if (itr == m_prefabMods.end())
+        return;
+    for (auto m : itr->second) {
+        m.m_pos = zdo.get_position() + zdo.get_rotation() * (m.m_pos * scale);
+        HeightmapManager::instance().AddModifier(m, true);
+    }
+}
+
+void ZoneManager::RegisterVisuals(avledet::gen::Randoms const &randoms, avledet::gen::RollResult const &roll,
+                                  Vector3f pos, Quaternion rot)
+{
+    for (auto &&[mod, toggles] : randoms.m_terrainMods) {
+        if (!toggles.Live(roll))
+            continue;
+        auto m  = mod;
+        m.m_pos = pos + rot * m.m_pos;
+        HeightmapManager::instance().AddModifier(m, false);
+    }
+    for (auto &&toggles : randoms.m_visualSnaps)
+        if (toggles.Live(roll))
+            m_visualSnapper = true;
+}
+
+void ZoneManager::SnappAll()
+{
+    if (m_snappers.empty() && !m_visualSnapper)
+        return;
+    HeightmapManager::instance().ForceGenerateAll();
+    for (auto &&[zdo, offset] : m_snappers) {
+        auto p = zdo->get_position();
+        p.y    = GetGroundHeight(p) + offset;
+        zdo->set_position(p);
+    }
+    m_snappers.clear();
+    m_visualSnapper = false;
+}
+
 void ZoneManager::GenerateFeature(Feature const &location, avledet::util::Hash seed, Vector3f pos,
                                    Quaternion rot)
 {
     VUtils::Random::State state(seed);
+    std::vector<Prefab::Instance> offProxies;
+    avledet::gen::RollResult roll;
+    auto active
+            = location.m_randoms.roll(state, location.m_pieces.size(), pos, rot, std::nullopt, &offProxies, &roll);
+    auto snapOffset = [&](std::size_t i) -> std::optional<float> {
+        for (auto &&[view, offset] : location.m_randoms.m_snaps)
+            if (view == (std::int32_t) i)
+                return offset;
+        return std::nullopt;
+    };
 
-    // TODO is random damage really important?
-    //  I don't think it drasically affects much
-    //WearNTear.m_randomInitialDamage = location.m_feature.m_applyRandomDamage;
-    //for (auto&& znetView2 : location.m_netViews) {
+    // vanilla WearNTear.m_randomInitialDamage, on for the whole spawn including the dungeon
+    bool randomDamage = location.m_applyRandomDamage;
 
-    for (auto &&piece : location.m_pieces) {
+    for (std::size_t i = 0; i < location.m_pieces.size(); i++) {
+        if (!active[i])
+            continue;
+        auto &&piece = location.m_pieces[i];
         // Dungeon hierarchy:
         //  Location
         //      Interior (InteriorTransform)
         //          DG_(dungeon)
 
         if (!(AVL_CONFIG.m_dng_enabled && piece.get_prefab().get().AllFlagsPresent(Prefab::Flag::DUNGEON))) {
-            auto &&zdo = ZdoManager::instance().Instantiate(piece.m_prefabHash, pos + rot * piece.m_pos);
+            auto &&zdo = ZdoManager::instance().Instantiate(piece.m_prefabHash, pos + rot * piece.m_pos, piece.m_scale);
             zdo->set_rotation(rot * piece.m_rot);
+            AwakeRandom(state, *zdo, randomDamage);
+            RegisterSpawned(*zdo);
+            if (auto offset = snapOffset(i))
+                AddSnapper(zdo, *offset);
+            if (zdo->get_prefab().get().AllFlagsPresent(Prefab::Flag::WEAR_N_TEAR))
+                zdo->set(avledet::util::hashes::ZDO::WearNTear::PRE_SNOW, true);
+            // the clone carries its nested views, their Awake creates ZDOs again
+            for (auto &&[parent, children] : location.m_randoms.m_nested) {
+                if (parent != (std::int32_t) i)
+                    continue;
+                for (auto j : children) {
+                    if (!active[j])
+                        continue;
+                    auto &&child = location.m_pieces[j];
+                    auto &&nzdo  = ZdoManager::instance().Instantiate(child.m_prefabHash, pos + rot * child.m_pos, child.m_scale);
+                    nzdo->set_rotation(rot * child.m_rot);
+                    AwakeRandom(state, *nzdo, randomDamage);
+                    RegisterSpawned(*nzdo);
+                }
+            }
         } else {
             auto &&dungeon = DungeonManager::instance().get_dungeon(piece.m_prefabHash);
 
             // TODO not really optional, it is required through a branch
             ZDO::optional zdo;
 
-            if (dungeon.m_interior_position != Vector3f::ZERO) {
+            if (dungeon.m_use_custom_interior_transform) {
+                // vanilla SpawnLocation moves the interior transform so the generator lands in the zone
+                // center, through Matrix4x4.Rotate(inv) * Translate column 3 (= inv * v) and back
+                Vector3f zonePos = ZoneToWorldPos(WorldToZonePos(pos));
+                Quaternion inv(-rot.x, -rot.y, -rot.z, rot.w);// Unity Quaternion.Inverse
+                Vector3f local = inv * (zonePos + dungeon.m_interior_position + dungeon.m_original_position - pos);
+                local.y        = dungeon.m_interior_position.y;
 
-                ZoneID zone      = WorldToZonePos(pos);
-                Vector3f zonePos = ZoneToWorldPos(zone);
-
-                Vector3f piecePos
-                        = zonePos + dungeon.m_interior_position// ( 0, 5000, 0 )
-                          + dungeon.m_original_position;// minor position change (usually height and a horizontal axis)
-
-                piecePos.y = dungeon.m_interior_position.y + pos.y;
-
-                zdo = ZdoManager::instance().Instantiate(piece.m_prefabHash, piecePos);
-                zdo->set_rotation(piece.m_rot);
+                zdo = ZdoManager::instance().Instantiate(piece.m_prefabHash, pos + rot * local);
+                zdo->set_rotation(rot * inv);
             } else {
-                zdo = ZdoManager::instance().Instantiate(piece.m_prefabHash, pos + rot * piece.m_pos);
+                zdo = ZdoManager::instance().Instantiate(piece.m_prefabHash, pos + rot * piece.m_pos, piece.m_scale);
                 zdo->set_rotation(rot * piece.m_rot);
             }
 
@@ -1353,10 +1468,20 @@ void ZoneManager::GenerateFeature(Feature const &location, avledet::util::Hash s
             if (zdo->get_position().y > 4000)
                 DungeonManager::instance().m_dungeonInstances.push_back(zdo->get_id());
 
-            DungeonManager::instance().generate(dungeon, zdo);
+            AwakeRandom(state, *zdo, randomDamage);
+            DungeonManager::instance().generate(dungeon, zdo, randomDamage);
         }
     }
-    //WearNTear.m_randomInitialDamage = false;
+
+    // the proxy spawns the location visuals: inactive views turned on there get a ZDO in Awake,
+    // its TerrainModifiers go live, and its SpawnLocation ends with SnappAll
+    for (auto &&view : offProxies) {
+        auto &&zdo = ZdoManager::instance().Instantiate(view.m_prefabHash, pos + rot * view.m_pos);
+        zdo->set_rotation(rot * view.m_rot);
+        RegisterSpawned(*zdo);
+    }
+    RegisterVisuals(location.m_randoms, roll, pos, rot);
+    SnappAll();
 
     // https://www.reddit.com/r/valheim/comments/xns70u/comment/ipv77ca/?utm_source=share&utm_medium=web2x&context=3
     // https://www.reddit.com/r/valheim/comments/r6mv1q/comment/hmutgdl/?utm_source=share&utm_medium=web2x&context=3
@@ -1399,8 +1524,8 @@ std::list<std::reference_wrapper<ZoneManager::Feature::Instance>> ZoneManager::G
 void ZoneManager::GetTerrainDelta(VUtils::Random::State &state, Vector3f center, float radius, float &delta,
                                    Vector3f &slopeDirection)
 {
-    float num2 = std::numeric_limits<float>::min();
-    float num3 = std::numeric_limits<float>::max();
+    float num2 = -999999.f;
+    float num3 = 999999.f;
     Vector3f b = center;
     Vector3f a = center;
     for (int i = 0; i < 10; i++) {
@@ -1424,7 +1549,10 @@ void ZoneManager::GetTerrainDelta(VUtils::Random::State &state, Vector3f center,
 // public
 float ZoneManager::GetGroundHeight(Vector3f p)
 {
-    return GeoManager::instance().GetHeight(p.x, p.z);
+    // vanilla raycasts the terrain mesh, misses return p.y
+    Vector3f normal;
+    HeightmapManager::instance().GetHeightmap(WorldToZonePos(p)).GetGroundData(p, p.y, normal);
+    return p.y;
 }
 
 // public
@@ -1435,12 +1563,10 @@ Heightmap &ZoneManager::GetGroundData(Vector3f &p, Vector3f &normal, avledet::ut
 {
     auto &&heightmap = HeightmapManager::instance().GetHeightmap(WorldToZonePos(p));
 
-    heightmap.GetWorldHeight(p, p.y);
+    heightmap.GetGroundData(p, p.y, normal);
 
     biome     = heightmap.GetBiome(p);
     biomeArea = heightmap.GetBiomeArea();
-
-    heightmap.GetWorldNormal(p, normal);
 
     return heightmap;
 }

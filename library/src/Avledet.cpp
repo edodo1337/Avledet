@@ -32,6 +32,9 @@
 #include "VUtilsString.h"
 #include "ZDOManager.h"
 #include "ZoneManager.h"
+#include "AltBiomes.h"
+
+void probe_dump(char const *dir);// Probe.cpp
 
 // Defined
 //  TODO this is very ugly
@@ -300,11 +303,19 @@ void Avledet::init()
     WorldManager::instance().PostZoneInit();
 #if AVL_IS_ON(AVL_ZONE_GENERATION)
     GeoManager::instance().PostWorldInit();
+    AltBiomeManager::instance().PostGeoInit();
     HMBuildManager::instance().PostGeoInit();
     ZoneManager::instance().PostGeoInit();
 #endif
 
     WorldManager::instance().PostInit();
+
+    // worldgen probe: dump generated world for comparison with vanilla, then quit
+    if (auto out = std::getenv("AVL_PROBE_OUT")) {
+        probe_dump(out);
+        std::exit(0);
+    }
+
     NetManager::instance().PostInit();
 
     if (AVL_CONFIG.m_replay_mode != ReplayMode::NONE) {
@@ -327,19 +338,20 @@ void Avledet::init()
 #ifdef _WIN32
     SetConsoleCtrlHandler(
             [](DWORD dwCtrlType) {
-#else                                              // !_WIN32
-    signal(SIGINT, [](int) {
-#endif                                             // !_WIN32
                 tracy::SetThreadName("kernel");
 
                 Avledet::instance().Stop();                 // set to true
                 Avledet::instance().m_run_state.wait(false);// block until notify by uninit()
-#ifdef _WIN32
                 return TRUE;
             },
             TRUE);
 #else // !_WIN32
-    });
+    // The handler runs on the main thread, so it must not wait for the main
+    // loop (that deadlocked and the world was never saved). Only set the flag;
+    // the main loop then exits and uninit() saves the world.
+    auto onStop = [](int) { Avledet::instance().Stop(); };
+    signal(SIGINT, onStop);
+    signal(SIGTERM, onStop);
 #endif// !_WIN32
 }
 

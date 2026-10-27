@@ -176,14 +176,12 @@ bool Heightmap::HaveBiome(avledet::util::Biome biome)
 // private
 float Heightmap::Distance(float x, float y, float rx, float ry)
 {
-    float num  = x - rx;
-    float num2 = y - ry;
-
-    // (sqrt(2) - sqrt(x ^ 2 + y ^ 2)) ^ 3
-    // https://www.math3d.org/sL5gEdMjk
-
-    float num4 = std::sqrt(2) - VUtils::Math::magnitude(num, num2);
-    return num4 * num4 * num4;
+    // same casts and 1.414 constant as vanilla Heightmap.Distance
+    float num  = (float) ((double) x - (double) rx);
+    float num2 = (float) ((double) y - (double) ry);
+    float num3 = std::sqrt((float) ((double) num * (double) num + (double) num2 * (double) num2));
+    float num4 = (float) (1.4140000343322754 - (double) num3);
+    return (float) ((double) num4 * (double) num4 * (double) num4);
 }
 
 // public
@@ -500,6 +498,35 @@ bool Heightmap::GetWorldNormal(Vector3f worldPos, Vector3f &normal)
     return true;
 }
 
+bool Heightmap::GetGroundData(Vector3f worldPos, float &height, Vector3f &normal)
+{
+    // vertex (x, y) is at zone center + (x - 32, y - 32), cell split by diagonal (x+1, y)-(x, y+1)
+    Vector3f local = worldPos - ZoneManager::ZoneToWorldPos(this->m_zone);
+    float fx       = local.x + (ZoneManager::UNITS_PER_ZONE / 2);
+    float fy       = local.z + (ZoneManager::UNITS_PER_ZONE / 2);
+    if (fx < 0 || fy < 0 || fx > E_WIDTH - 1 || fy > E_WIDTH - 1)
+        return false;
+
+    int x = std::min((int) fx, E_WIDTH - 2);
+    int y = std::min((int) fy, E_WIDTH - 2);
+    fx -= x;
+    fy -= y;
+
+    float h00 = this->m_heights[y * E_WIDTH + x];
+    float h10 = this->m_heights[y * E_WIDTH + x + 1];
+    float h01 = this->m_heights[(y + 1) * E_WIDTH + x];
+    float h11 = this->m_heights[(y + 1) * E_WIDTH + x + 1];
+
+    if (fx + fy <= 1) {
+        height = h00 + fx * (h10 - h00) + fy * (h01 - h00);
+        normal = Vector3f(h00 - h10, 1, h00 - h01).normal();
+    } else {
+        height = h11 + (1 - fx) * (h01 - h11) + (1 - fy) * (h10 - h11);
+        normal = Vector3f(h01 - h11, 1, h10 - h11).normal();
+    }
+    return true;
+}
+
 // private
 bool Heightmap::GetWorldHeight(Vector3f const &worldPos, float &height)
 {
@@ -740,40 +767,174 @@ void Heightmap::PaintCleared(Vector3f worldPos, float radius, TerrainModifier::P
     }*/
 }
 
+bool Heightmap::TerrainVSModifier(TerrainMod const &mod) const
+{
+    Vector3f c = ZoneManager::ZoneToWorldPos(this->m_zone);
+    float num  = mod.GetRadius() + 4.f;
+    float num2 = (float) ZoneManager::UNITS_PER_ZONE * 1.f * 0.5f;
+    return !(mod.m_pos.x + num < c.x - num2 || mod.m_pos.x - num > c.x + num2 || mod.m_pos.z + num < c.z - num2
+             || mod.m_pos.z - num > c.z + num2);
+}
+
+void Heightmap::Regenerate(std::vector<TerrainMod const *> const &mods)
+{
+    Regenerate();// base
+    for (auto &&mod : mods) {
+        if (mod->m_level)
+            ModLevel(mod->m_pos + Vector3f(0, mod->m_levelOffset, 0), mod->m_levelRadius, mod->m_square);
+        if (mod->m_smooth)
+            ModSmooth(mod->m_pos + Vector3f(0, mod->m_levelOffset, 0), mod->m_smoothRadius, mod->m_smoothPower);
+        if (mod->m_paintCleared)
+            ModPaint(mod->m_pos, mod->m_paintRadius, mod->m_paintType, mod->m_paintHeightCheck, mod->m_paintStrength);
+    }
+    // UpdateCornerDepths after the collision mesh rebuild
+    auto depth = [&](int x, int y) {
+        return std::max(0.f, (float) ((double) ZoneManager::WATER_LEVEL - (double) GetHeight(x, y)));
+    };
+    m_oceanDepth[0] = depth(0, ZoneManager::UNITS_PER_ZONE);
+    m_oceanDepth[1] = depth(ZoneManager::UNITS_PER_ZONE, ZoneManager::UNITS_PER_ZONE);
+    m_oceanDepth[2] = depth(ZoneManager::UNITS_PER_ZONE, 0);
+    m_oceanDepth[3] = depth(0, 0);
+    m_queued = false;
+}
+
+// Unity Vector2.Distance on vertex coordinates
+static float VertexDistance(int ax, int ay, int bx, int by)
+{
+    float dx = (float) ax - (float) bx;
+    float dy = (float) ay - (float) by;
+    return (float) std::sqrt((double) (dx * dx + dy * dy));
+}
+
+// vanilla LevelTerrain (not a player modification)
+void Heightmap::ModLevel(Vector3f worldPos, float radius, bool square)
+{
+    std::int32_t x, y;
+    WorldToVertexMask(worldPos, x, y);
+    float num = radius;
+    int num2  = (int) std::ceil(num);
+    for (int i = y - num2; i <= y + num2; i++)
+        for (int j = x - num2; j <= x + num2; j++)
+            if ((square || !(VertexDistance(x, y, j, i) > num)) && j >= 0 && i >= 0 && j < E_WIDTH && i < E_WIDTH)
+                m_heights[i * E_WIDTH + j] = worldPos.y;
+}
+
+// vanilla SmoothTerrain2 (not a player modification)
+void Heightmap::ModSmooth(Vector3f worldPos, float radius, float power)
+{
+    std::int32_t x, y;
+    WorldToVertex(worldPos, x, y);
+    float b   = worldPos.y;
+    float num = radius;
+    int num2  = (int) std::ceil(num);
+    for (int i = y - num2; i <= y + num2; i++) {
+        for (int j = x - num2; j <= x + num2; j++) {
+            float num4 = VertexDistance(x, y, j, i);
+            if (num4 > num)
+                continue;
+            float num5 = num4 / num;
+            if (j >= 0 && i >= 0 && j < E_WIDTH && i < E_WIDTH) {
+                num5 = power != 3.f ? (float) std::pow((double) num5, (double) power)
+                                    : (float) ((double) num5 * (double) num5 * (double) num5);
+                float height = m_heights[i * E_WIDTH + j];
+                float t      = (float) (1.0 - (double) num5);
+                // DUtils.Lerp
+                float h = t <= 0.f ? height
+                        : t >= 1.f ? b
+                                   : (float) ((double) height * (1.0 - (double) t) + (double) b * (double) t);
+                m_heights[i * E_WIDTH + j] = h;
+            }
+        }
+    }
+}
+
+// vanilla PaintCleared, the mask is an RGBA32 texture (8 bit per channel)
+void Heightmap::ModPaint(Vector3f worldPos, float radius, TerrainModifier::PaintType type, bool heightCheck,
+                         float strength)
+{
+    using Color = avledet::util::Color;
+    worldPos.x -= 0.5f;
+    worldPos.z -= 0.5f;
+    float num = worldPos.y;
+    std::int32_t x, y;
+    WorldToVertexMask(worldPos, x, y);
+    float num2 = radius;
+    int num3   = (int) std::ceil(num2);
+
+    Color target;
+    switch (type) {
+    case TerrainModifier::PaintType::Dirt: target = Color(1, 0, 0, 1); break;
+    case TerrainModifier::PaintType::Cultivate: target = Color(0, 1, 0, 1); break;
+    case TerrainModifier::PaintType::Paved: target = Color(0, 0, 1, 1); break;
+    case TerrainModifier::PaintType::Reset: target = Color(0, 0, 0, 1); break;
+    case TerrainModifier::PaintType::ClearVegetation: target = Color(0, 0, 0, 0); break;
+    case TerrainModifier::PaintType::DeepSnow: target = Color(1, 1, 1, 1); break;
+    }
+    auto q = [](float v) { return std::floor(std::clamp(v, 0.f, 1.f) * 255.f + 0.5f) / 255.f; };
+
+    for (int i = y - num3; i <= y + num3; i++) {
+        for (int j = x - num3; j <= x + num3; j++) {
+            if (j < 0 || i < 0 || j >= E_WIDTH || i >= E_WIDTH || (heightCheck && m_heights[i * E_WIDTH + j] > num))
+                continue;
+            float f = 1.f - std::clamp(VertexDistance(x, y, j, i) / num2, 0.f, 1.f);
+            f       = (float) std::pow((double) f, (double) 0.1f);
+            f *= strength;
+            float t     = std::clamp(f, 0.f, 1.f);// Color.Lerp
+            auto &&c    = m_paintMask[i * E_WIDTH + j];
+            float alpha = c.a;
+            Color n(c.r + (target.r - c.r) * t, c.g + (target.g - c.g) * t, c.b + (target.b - c.b) * t,
+                    c.a + (target.a - c.a) * t);
+            if (type != TerrainModifier::PaintType::ClearVegetation)
+                n.a = alpha;
+            c = Color(q(n.r), q(n.g), q(n.b), q(n.a));
+        }
+    }
+}
+
+// Texture2D.GetPixel of the paint mask, clamp mode
+avledet::util::Color const &Heightmap::MaskPixel(std::int32_t x, std::int32_t y) const
+{
+    x = std::clamp(x, 0, E_WIDTH - 1);
+    y = std::clamp(y, 0, E_WIDTH - 1);
+    return this->m_paintMask[y * E_WIDTH + x];
+}
+
+// vanilla WorldToVertexMask
+void Heightmap::WorldToVertexMask(Vector3f worldPos, std::int32_t &x, std::int32_t &y) const
+{
+    Vector3f vector = worldPos - ZoneManager::ZoneToWorldPos(this->m_zone);
+    float num       = (float) (E_WIDTH / 2);
+    x               = (int) std::floor(vector.x + 0.5f + num);
+    y               = (int) std::floor(vector.z + 0.5f + num);
+}
+
 // public
 float Heightmap::GetVegetationMask(Vector3f worldPos)
 {
-    std::int32_t x;
-    std::int32_t y;
-    this->WorldToVertex(worldPos - Vector3f(.5f, 0.f, .5f), x, y);
-
-    // USE A DIFFERENT MASK OF ONLY ALPHA-TEX FLOATS
-    return this->m_paintMask[y * ZoneManager::UNITS_PER_ZONE + x].a;
+    worldPos.x -= 0.5f;
+    worldPos.z -= 0.5f;
+    std::int32_t x, y;
+    this->WorldToVertexMask(worldPos, x, y);
+    return this->MaskPixel(x, y).a;
 }
 
 // public
 bool Heightmap::IsCleared(Vector3f worldPos)
 {
-    std::int32_t x;
-    std::int32_t y;
-    this->WorldToVertex(worldPos - Vector3f(.5f, 0.f, .5f), x, y);
-
-    // mode is clamp
-    x = std::clamp(x, 0, ZoneManager::UNITS_PER_ZONE - 1);
-    y = std::clamp(y, 0, ZoneManager::UNITS_PER_ZONE - 1);
-
-    auto &&pixel = this->m_paintMask[y * ZoneManager::UNITS_PER_ZONE + x];
+    worldPos.x = (float) ((double) worldPos.x - 0.5);
+    worldPos.z = (float) ((double) worldPos.z - 0.5);
+    std::int32_t x, y;
+    this->WorldToVertexMask(worldPos, x, y);
+    auto &&pixel = this->MaskPixel(x, y);
     return pixel.r > 0.5f || pixel.g > 0.5f || pixel.b > 0.5f;
 }
 
 // public
 bool Heightmap::IsCultivated(Vector3f worldPos)
 {
-    std::int32_t x;
-    std::int32_t y;
-    this->WorldToVertex(worldPos, x, y);
-
-    return this->m_paintMask[y * ZoneManager::UNITS_PER_ZONE + x].g > 0.5f;
+    std::int32_t x, y;
+    this->WorldToVertexMask(worldPos, x, y);
+    return this->MaskPixel(x, y).g > 0.5f;
 }
 
 // public
@@ -824,10 +985,10 @@ void Heightmap::LevelTerrain(Vector3f worldPos, float radius, bool square,
 // public
 avledet::util::Color Heightmap::GetPaintMask(std::int32_t x, std::int32_t y)
 {
-    if (x < 0 || y < 0 || x >= ZoneManager::UNITS_PER_ZONE || y >= ZoneManager::UNITS_PER_ZONE) {
+    if (x < 0 || y < 0 || x >= E_WIDTH || y >= E_WIDTH) {
         return avledet::util::Colors::BLACK;
     }
-    return this->m_paintMask[y * ZoneManager::UNITS_PER_ZONE + x];
+    return this->m_paintMask[y * E_WIDTH + x];
 }
 
 // public

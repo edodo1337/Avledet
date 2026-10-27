@@ -20,15 +20,10 @@ class Dungeon
 
     struct DoorDef
     {
-        Prefab::Reference m_prefab;
+        // 1.0: a door is a list of net parts (DG_Hole has several), local to the door
+        std::vector<Prefab::Instance> m_views;
         std::string m_connection_type = "";
         float m_chance = 0;
-
-        DoorDef(Prefab::Reference prefab, 
-            std::string connection_type,
-            float chance) : m_prefab(prefab), m_connection_type(connection_type), m_chance(chance) {
-
-        }
     };
 
     //std::string m_name;
@@ -73,10 +68,16 @@ class Dungeon
 
     float m_perimeter_buffer = 2;
 
-    //bool m_useCustomInteriorTransform;
+    bool m_use_custom_interior_transform = false;
 
     Vector3f m_interior_position;// {0, 5000, 0} for dg/cave
     Vector3f m_original_position;// {0, 110, 30} and varies for dg/cave
+
+    // rooms must fit these bounds, centered at zone center, y = pos.y - m_generator_original_position.y
+    Vector3f m_zone_size = Vector3f(64, 64, 64);
+    Vector3f m_generator_original_position;
+    bool m_add_base_seed_to_random_spawn = false;
+    bool m_generator_custom_interior     = false;// DungeonGenerator.m_useCustomInteriorTransform, room seeds
 
     // Order is significant (polled with Seeded Random)
     std::vector<std::unique_ptr<Room const>> m_available_rooms;

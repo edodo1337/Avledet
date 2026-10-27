@@ -232,8 +232,6 @@ void ConfigManager::load()
             {
                 auto &&endcaps = dungeons["endcaps"];
                 r(m_dng_endcaps_enabled, endcaps, "enabled", true, nullptr);
-                r(m_dng_endcaps_inset_ratio, endcaps, "inset-ratio", .5f,
-                  [](float val) { return val < 0.f || val > 1.f; });
             }
 
             r(m_dng_doors_enabled, dungeons, "doors", true, nullptr);

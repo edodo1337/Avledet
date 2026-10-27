@@ -27,7 +27,8 @@ Peer::Peer(ISocket::Ptr socket) :
         self->Disconnect();
     });
 
-    this->Register("ServerHandshake", [](Peer::Ptr rpc) {
+    // 1.0: client sends its invite secret key here, unused on a Steam server
+    this->Register("ServerHandshake", [](Peer::Ptr rpc, std::string_view inviteSecretKey) {
         rpc->Register("PeerInfo", [](Peer::Ptr rpc, DataReader reader) {
             rpc->m_characterID.set_user_id(reader.read<std::int64_t>());
 #if AVL_IS_ON(AVL_DISALLOW_MALICIOUS_PLAYERS)
@@ -36,10 +37,8 @@ Peer::Peer(ISocket::Ptr socket) :
 #endif
             auto version = reader.read<std::string_view>();
             LOG_INFO(AVL_LOGGER, "Client {} has version {}", rpc->m_socket->get_host_name(), version);
-            if (version != VConstants::GAME)
-                return rpc->close(ConnectionStatus::ErrorVersion);
 
-            // network version
+            // only the network version is checked, like vanilla
             if (reader.read<std::uint32_t>() != VConstants::NETWORK) {
                 return rpc->close(ConnectionStatus::ErrorVersion);
             }
@@ -55,7 +54,11 @@ Peer::Peer(ISocket::Ptr socket) :
             if (!(rpc->m_name.length() >= 3 && rpc->m_name.length() <= 15))
                 throw std::runtime_error("peer provided invalid length name");
 #endif
+            rpc->m_playfabId = reader.read<std::string>();
+            rpc->SetSimDistance(reader);
+
             auto password = reader.read<std::string_view>();
+            reader.read<std::string_view>();// invite secret key, unused
 
             if (AVL_CONFIG.m_player_auth) {
                 auto ticket = reader.read<avledet::util::ByteView>();
@@ -108,6 +111,23 @@ Peer::Peer(ISocket::Ptr socket) :
     });
 
     LOG_INFO(AVL_LOGGER, "{} has connected", m_socket->get_host_name());
+}
+
+void Peer::SetSimDistance(DataReader &reader)
+{
+    SimulationDistance desired;
+    desired.m_near    = reader.read<std::int32_t>();
+    desired.m_far     = reader.read<std::int32_t>();
+    desired.m_classic = reader.read<bool>();
+
+    // Avledet sends square zone areas, which match the original distance
+    m_simDistance = desired.min(SimulationDistance::ORIGINAL);
+
+    avledet::util::Writer writer;
+    writer.write(m_simDistance.m_near);
+    writer.write(m_simDistance.m_far);
+    writer.write(m_simDistance.m_classic);
+    Invoke("RPC_ValidatedSimulationDistance", writer.release());
 }
 
 void Peer::update()

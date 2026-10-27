@@ -137,7 +137,7 @@ namespace avledet::util {
             // Permissions / Meter / Gamestate
             static constexpr Hash C2S_SetGlobalKey    = __H("SetGlobalKey");
             static constexpr Hash C2S_RemoveGlobalKey = __H("RemoveGlobalKey");
-            static constexpr Hash Pong                = __H("Pong");
+            static constexpr Hash Pong                = __H("RPC_Pong");
             static constexpr Hash ChatMessage         = __H("ChatMessage");
 
 
@@ -762,8 +762,9 @@ namespace avledet::util {
             };// namespace VisEquipment
 
             namespace WearNTear {
-                static constexpr Hash HEALTH  = __H("health");
-                static constexpr Hash SUPPORT = __H("support");
+                static constexpr Hash HEALTH   = __H("health");
+                static constexpr Hash SUPPORT  = __H("support");
+                static constexpr Hash PRE_SNOW = __H("preSnow");// 1.0: generated pieces, set by locations and rooms
             };// namespace WearNTear
 
             namespace WispSpawner {

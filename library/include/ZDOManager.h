@@ -214,6 +214,9 @@ class ZdoManager : public avledet::util::IManager<ZdoManager>
 
     //[[maybe_unused]] ZDO::unsafe_value InstantiateBounded(avledet::util::Hash hash, Vector3f pos, const Prefab** outPrefab);
 
+    // vanilla ZNetView.Awake: with m_syncInitialScale a localScale other than one goes to the ZDO
+    ZDO::reference Instantiate(avledet::util::Hash hash, Vector3f pos, Vector3f localScale);
+
     [[maybe_unused]] ZDO::reference Instantiate(avledet::util::Hash hash, Vector3f pos)
     {
         //return InstantiateBounded(hash, pos, nullptr);

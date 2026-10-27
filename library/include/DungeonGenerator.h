@@ -35,8 +35,7 @@ class DungeonGenerator
     //std::stringstream math3d_dbg_ss;
 
   public:
-    static constexpr Vector3f const m_zone_size = Vector3f(64, 64, 64);
-
+    bool m_random_damage;    // vanilla WearNTear.m_randomInitialDamage during the location spawn
     Quaternion m_rot;        // instanced rotation
     Vector3f m_pos;          // instanced position
     Vector3f m_zone_center;
@@ -85,6 +84,12 @@ class DungeonGenerator
     // Camps/grid meadows
     void PlaceRoom(Room const &room, Vector3f pos, Quaternion rot);
 
+    // RandomSpawn seed of a room at world pos
+    int RoomSeed(Vector3f worldPos);
+    // which room views get spawned, worldPos/worldRot of the room for elevation/lava checks
+    std::vector<bool> RollRoom(Room const &room, VUtils::Random::State &state, Vector3f worldPos, Quaternion worldRot,
+                               std::vector<Prefab::Instance> *offProxies, avledet::gen::RollResult *roll);
+
     // Dungeon placement
     void PlaceRoom(Room const &room, Vector3f pos, Quaternion rot,
                    RoomConnectionInstance const &fromConnection);
@@ -114,7 +119,7 @@ class DungeonGenerator
     bool CheckRequiredRooms();
 
   public:
-    DungeonGenerator(Dungeon const &dungeon, ZDO::reference zdo);
+    DungeonGenerator(Dungeon const &dungeon, ZDO::reference zdo, bool randomDamage = false);
 
     DungeonGenerator(DungeonGenerator const &other) = delete;
 

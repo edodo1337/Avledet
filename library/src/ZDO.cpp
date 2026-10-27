@@ -150,7 +150,8 @@ bool ZDO::_try_convert(avledet::util::Hash key, avledet::util::CSU::Vector3f dat
 
 std::uint32_t ZDO::_read_num_items(avledet::util::Reader &reader, int version)
 {
-    if (version < 33) {
+    // version 0 is the network path, which uses varint counts
+    if (version != 0 && version < 33) {
         return (std::uint32_t) reader.read<std::uint8_t>();
     }
     auto num = (std::uint32_t) reader.read<std::uint8_t>();
@@ -290,20 +291,12 @@ avledet::util::Hash ZDO::get_prefab_hash() const
     return this->get_prefab().get().m_hash;
 }
 
+// vanilla ZNetView.SyncScale: always the Vector3 "scale" (the old code put a Vector3 under
+// "scaleScalar", which clients read as a float, so they never saw the scale)
 void ZDO::set_local_scale(Vector3f scale, bool allowIdentity)
 {
-    // if scaling along all axis VS scaling axis differently
-    // this is just to save some memory
-    if (std::abs(scale.x - scale.y) < std::numeric_limits<float>::epsilon() * 8
-        && std::abs(scale.y - scale.z) < std::numeric_limits<float>::epsilon() * 8) {
-
-        if (allowIdentity || std::abs(scale.x - 1) > std::numeric_limits<float>::epsilon() * 8) {
-            this->set(avledet::util::hashes::ZDO::ZNetView::SCALE_SCALAR, scale);
-        }
-    } else {
-        // otherwise use scale
+    if (allowIdentity || !(scale.x == 1 && scale.y == 1 && scale.z == 1))
         this->set(avledet::util::hashes::ZDO::ZNetView::SCALE, scale);
-    }
 }
 
 avledet::util::UserID ZDO::get_owner() const

@@ -52,7 +52,7 @@ class Room
     Quaternion m_rot;
 
     std::vector<Prefab::Instance> m_netViews;
-    std::vector<avledet::gen::RandomSpawn> m_random_spawns;
+    avledet::gen::Randoms m_randoms;
 
     // TODO later...
     //public MusicVolume m_musicPrefab;

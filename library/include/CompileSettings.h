@@ -351,9 +351,9 @@ namespace VConstants {
     // Valheim game version
     //  Located in Version.cs
     static constexpr char const *const GAME
-            = "0.221.12";// WARNING: do NOT change the type of this to anything besides const char*!!! see ModManager...
+            = "1.0.20";// WARNING: do NOT change the type of this to anything besides const char*!!! see ModManager...
 
-    static constexpr std::uint32_t NETWORK = 36;
+    static constexpr std::uint32_t NETWORK = 41;
 
     // Used while loading world from file (ZNet/ZoneSystem/ZDOMan/RandEventSystem)
     // 32: Hildir beta

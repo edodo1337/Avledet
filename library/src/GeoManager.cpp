@@ -46,6 +46,8 @@ void GeoManager::PostWorldInit()
     m_noiseGen->SetCellularDistanceFunction(avledet::util::FastNoise::CellularDistanceFunction::Euclidean);
     m_noiseGen->SetCellularReturnType(avledet::util::FastNoise::CellularReturnType::Distance);
     m_noiseGen->SetFractalOctaves(2);
+    // vanilla resets the seed right after creating the noise, so Ashlands always use seed 0
+    m_noiseGen->SetSeed(0);
         
     this->m_offset0 = (float)state.range(-10000, 10000);
     this->m_offset1 = (float)state.range(-10000, 10000);
@@ -53,8 +55,8 @@ void GeoManager::PostWorldInit()
     this->m_offset3 = (float)state.range(-10000, 10000);
     this->m_river_random = VUtils::Random::State(
             state.range(std::numeric_limits<std::int32_t>::min(), std::numeric_limits<std::int32_t>::max()));
-    this->m_stream_random
-            = VUtils::Random::State(state.range(std::numeric_limits<std::int32_t>::min(), std::numeric_limits<std::int32_t>::max()));
+    this->m_streamSeed = state.range(std::numeric_limits<std::int32_t>::min(), std::numeric_limits<std::int32_t>::max());
+    this->m_stream_random = VUtils::Random::State(m_streamSeed);
 
     this->m_offset4 = (float)state.range(-10000, 10000);
 
@@ -79,7 +81,8 @@ void GeoManager::Pregenerate()
 {
     this->FindLakes();
     this->m_rivers = this->PlaceRivers();
-    this->m_streams = this->PlaceStreams();
+    this->m_streams = this->PlaceStreams(false);
+    this->PlaceStreams(true);// 1.0: Deep North streams, only rendered
 }
 
 std::vector<Vector2f> GeoManager::GetLakes()
@@ -152,19 +155,21 @@ int GeoManager::FindClosest(std::vector<Vector2f> const& points, Vector2f const&
     return num;
 }
 
-std::vector<GeoManager::River> GeoManager::PlaceStreams()
+std::vector<GeoManager::River> GeoManager::PlaceStreams(bool isDN)
 {
-    //VUtils::Random::State state(this->m_streamSeed);
+    // vanilla re-seeds the stream random on every call
+    m_stream_random = VUtils::Random::State(m_streamSeed);
+    bool riverPreGen = !isDN;
     std::vector<River> list;
     for (int i = 0; i < 3000; i++)
     {
         Vector2f vector;
         float num2;
         Vector2f vector2;
-        if (this->FindStreamStartPoint(100, 26.0f, 31.0f, vector, num2) && this->FindStreamEndPoint(100, 36.0f, 44.0f, vector, 80.0f, 200.0f, vector2))
+        if (this->FindStreamStartPoint(riverPreGen, 100, 26.0f, 31.0f, vector, num2) && this->FindStreamEndPoint(riverPreGen, 100, 36.0f, 44.0f, vector, 80.0f, 200.0f, vector2))
         {
             Vector2f vector3 = (vector + vector2) * 0.5f;
-            float pregenerationHeight = this->GetPregenerationHeight(vector3.x, vector3.y);
+            float pregenerationHeight = this->GetPregenerationHeight(vector3.x, vector3.y, riverPreGen);
             if (pregenerationHeight >= 26.0f && pregenerationHeight <= 44.0f)
             {
                 River river;
@@ -180,11 +185,11 @@ std::vector<GeoManager::River> GeoManager::PlaceStreams()
             }
         }
     }
-    this->RenderRivers(list);
+    this->RenderRivers(list, isDN ? RiverAdd::OnlyDeepNorth : RiverAdd::SkipDeepNorth);
     return list;
 }
 
-bool GeoManager::FindStreamEndPoint(int iterations, float minHeight, float maxHeight, Vector2f const& start, float minLength, float maxLength, Vector2f &end)
+bool GeoManager::FindStreamEndPoint(bool riverPreGen, int iterations, float minHeight, float maxHeight, Vector2f const& start, float minLength, float maxLength, Vector2f &end)
 {
     float num = (float)(((double)maxLength - (double)minLength) / (double)iterations);
     float num2 = maxLength;
@@ -193,7 +198,7 @@ bool GeoManager::FindStreamEndPoint(int iterations, float minHeight, float maxHe
         num2 = (float)((double)num2 - (double)num);
         float num3 = m_stream_random.range(0.0f, 6.2831855f);
         Vector2f vector = start + Vector2f(std::sin(num3), std::cos(num3)) * num2;
-        float pregenerationHeight = this->GetPregenerationHeight(vector.x, vector.y);
+        float pregenerationHeight = this->GetPregenerationHeight(vector.x, vector.y, riverPreGen);
         if (pregenerationHeight > minHeight && pregenerationHeight < maxHeight)
         {
             end = vector;
@@ -204,13 +209,13 @@ bool GeoManager::FindStreamEndPoint(int iterations, float minHeight, float maxHe
     return false;
 }
 
-bool GeoManager::FindStreamStartPoint(int iterations, float minHeight, float maxHeight, Vector2f& p, float& starth)
+bool GeoManager::FindStreamStartPoint(bool riverPreGen, int iterations, float minHeight, float maxHeight, Vector2f& p, float& starth)
 {
     for (int i = 0; i < iterations; i++)
     {
         float num = m_stream_random.range(-10000.0f, 10000.0f);
         float num2 = m_stream_random.range(-10000.0f, 10000.0f);
-        float pregenerationHeight = this->GetPregenerationHeight(num, num2);
+        float pregenerationHeight = this->GetPregenerationHeight(num, num2, riverPreGen);
         if (pregenerationHeight > minHeight && pregenerationHeight < maxHeight)
         {
             p = Vector2f(num, num2);
@@ -339,11 +344,16 @@ bool GeoManager::IsRiverAllowed(Vector2f const&p0, Vector2f const&p1, float step
     return !flag;
 }
 
-void GeoManager::RenderRivers(std::vector<River> const&rivers)
+void GeoManager::RenderRivers(std::vector<River> const&rivers, RiverAdd addRule)
 {
     avledet::util::Map<Vector2i, std::vector<RiverPoint>> dictionary;
     for (const auto& river : rivers)
     {
+        if (addRule != RiverAdd::All) {
+            bool dn = IsDeepnorth(river.p0.x, river.p0.y);
+            if ((dn && addRule == RiverAdd::SkipDeepNorth) || (!dn && addRule == RiverAdd::OnlyDeepNorth))
+                continue;
+        }
         float num = (float)((double)river.widthMin / 8.0);
         Vector2f normalized = (river.p1 - river.p0).normal();
         Vector2f vector(-normalized.y, normalized.x);
@@ -496,13 +506,13 @@ VUtils::Biome GeoManager::GetBiome(Vector3f const& point)
 bool GeoManager::IsAshlands(float x, float y)
 {
     double num = (double)WorldAngle(x, y) * 100.0;
-    return (double)VUtils::Math::magnitude(x, (float)((double)y + (double)ashlandsYOffset)) > (double)ashlandsMinDistance + num;
+    return (double)VUtils::Math::Length(x, (float)((double)y + (double)ashlandsYOffset)) > (double)ashlandsMinDistance + num;
 }
 
 float GeoManager::GetAshlandsOceanGradient(float x, float y)
 {
     double num = (double)WorldAngle(x, y + ashlandsYOffset) * 100.0;
-    return (float)(((double)VUtils::Math::magnitude(x, y + ashlandsYOffset) - ((double)ashlandsMinDistance + num)) / 300.0);
+    return (float)(((double)VUtils::Math::Length(x, y + ashlandsYOffset) - ((double)ashlandsMinDistance + num)) / 300.0);
 }
 
 float GeoManager::GetAshlandsOceanGradient(Vector2f const& pos)
@@ -523,7 +533,7 @@ bool GeoManager::IsDeepnorth(float x, float y)
 
 VUtils::Biome GeoManager::GetBiome(float wx, float wy, float oceanLevel, bool waterAlwaysOcean)
 {
-    float num = VUtils::Math::magnitude(wx, wy);
+    float num = VUtils::Math::Length(wx, wy);
     float baseHeight = this->GetBaseHeight(wx, wy);
     float num2 = (float)((double)WorldAngle(wx, wy) * 100.0);
     if (waterAlwaysOcean && this->GetHeight(wx, wy) <= oceanLevel)
@@ -540,10 +550,7 @@ VUtils::Biome GeoManager::GetBiome(float wx, float wy, float oceanLevel, bool wa
     }
     if (IsDeepnorth(wx, wy))
     {
-        if (baseHeight > 0.4f)
-        {
-            return VUtils::Biome::Mountain;
-        }
+        // 1.0: Deep North no longer turns into Mountain above 0.4
         return VUtils::Biome::DeepNorth;
     }
     else
@@ -584,7 +591,7 @@ float GeoManager::WorldAngle(float wx, float wy)
 
 float GeoManager::GetBaseHeight(float wx, float wy)
 {
-    float num4 = VUtils::Math::magnitude(wx, wy);
+    float num4 = VUtils::Math::Length(wx, wy);
     double num5 = (double)wx;
     double num6 = (double)wy;
     num5 += 100000.0 + (double)this->m_offset0;
@@ -657,14 +664,14 @@ float GeoManager::GetHeight(float wx, float wy, VUtils::Color &mask)
     return this->GetBiomeHeight(biome, wx, wy, mask, false);
 }
 
-float GeoManager::GetPregenerationHeight(float wx, float wy)
+float GeoManager::GetPregenerationHeight(float wx, float wy, bool riverPreGen)
 {
     VUtils::Biome biome = this->GetBiome(wx, wy, 0.02f, false);
     VUtils::Color color;
-    return this->GetBiomeHeight(biome, wx, wy, color, true);
+    return this->GetBiomeHeight(biome, wx, wy, color, true, riverPreGen);
 }
 
-float GeoManager::GetBiomeHeight(VUtils::Biome biome, float wx, float wy, VUtils::Color& mask, bool preGeneration)
+float GeoManager::GetBiomeHeight(VUtils::Biome biome, float wx, float wy, VUtils::Color& mask, bool preGeneration, bool riverPreDN)
 {
     float num;
     if (preGeneration)
@@ -677,7 +684,7 @@ float GeoManager::GetBiomeHeight(VUtils::Biome biome, float wx, float wy, VUtils
     }
 
     mask = VUtils::Colors::BLACK;
-    if (VUtils::Math::magnitude(wx, wy) > 10500.0f)
+    if (VUtils::Math::Length(wx, wy) > 10500.0f)
     {
         return -2.0f * heightMultiplier; // GetHeightMultiplier();
     }
@@ -695,7 +702,9 @@ float GeoManager::GetBiomeHeight(VUtils::Biome biome, float wx, float wy, VUtils
     case VUtils::Biome::Plains:
         return (float)((double)this->GetPlainsHeight(wx, wy) * (double)num);
     case VUtils::Biome::DeepNorth:
-        return (float)((double)this->GetDeepNorthHeight(wx, wy) * (double)num);
+        if (preGeneration)
+            return (float)((double)this->GetDeepNorthHeightPregenerate(wx, wy, riverPreDN) * (double)num);
+        return (float)((double)this->GetDeepNorthHeight(wx, wy, mask) * (double)num);
     case VUtils::Biome::AshLands: {
         if (preGeneration)
         {
@@ -940,7 +949,7 @@ float GeoManager::GetAshlandsHeight(float wx, float wy, VUtils::Color &mask, boo
 
 float GeoManager::GetEdgeHeight(float wx, float wy)
 {
-    float num = VUtils::Math::magnitude(wx, wy);
+    float num = VUtils::Math::Length(wx, wy);
     float num2 = 10490.0f;
     if (num > num2)
     {
@@ -988,11 +997,43 @@ float GeoManager::GetSnowMountainHeight(float wx, float wy)
     return (float)((double)num3 + (double)VUtils::Math::PerlinNoise(num5 * 0.20000000298023224, num6 * 0.20000000298023224) * 2.0 * (double)num4);
 }
 
-float GeoManager::GetDeepNorthHeight(float wx, float wy)
+float GeoManager::GetDeepNorthHeight(float wx, float wy, VUtils::Color &mask)
+{
+    float wx2 = wx;
+    float wy2 = wy;
+    float num = this->GetBaseHeight(wx, wy) + 0.1f;
+    wx = (float)((double)wx + 100000.0 + (double)this->m_offset3);
+    wy = (float)((double)wy + 100000.0 + (double)this->m_offset3);
+    double num2 = (double)wx;
+    double num3 = (double)wy;
+    float num4 = (float)((double)VUtils::Math::PerlinNoise(num2 * 0.009999999776482582, num3 * 0.009999999776482582) * (double)VUtils::Math::PerlinNoise(num2 * 0.019999999552965164, num3 * 0.019999999552965164));
+    num4 = (float)((double)num4 + (double)VUtils::Math::PerlinNoise(num2 * 0.05000000074505806, num3 * 0.05000000074505806) * (double)VUtils::Math::PerlinNoise(num2 * 0.10000000149011612, num3 * 0.10000000149011612) * (double)num4 * 0.5);
+    float num5 = num;
+    num5 = (float)((double)num5 + (double)num4 * 0.10000000149011612);
+    float num6 = 0.15f;
+    float num7 = (float)((double)num5 - (double)num6);
+    float num8 = (float)std::clamp((double)num / 0.4000000059604645, 0.0, 1.0);
+    if (num7 > 0.0f) {
+        num5 = (float)((double)num5 - (double)num7 * ((1.0 - (double)num8) * 0.75));
+    }
+    num5 = this->AddRivers(wx2, wy2, num5);
+    num5 = (float)((double)num5 + (double)VUtils::Math::PerlinNoise(num2 * 0.10000000149011612, num3 * 0.10000000149011612) * 0.009999999776482582);
+    num5 = (float)((double)num5 + (double)VUtils::Math::PerlinNoise(num2 * 0.4000000059604645, num3 * 0.4000000059604645) * 0.003000000026077032);
+    // alpha 0 matters: location placement checks mask.a for vegetation limits
+    float num9 = (float) VUtils::Math::Fbm(Vector2f((float) (num2 * 0.009999999776482582), (float) (num3 * 0.009999999776482582)), 3, 2.0f, 0.5f);
+    num9 = (num9 + 1.0f) / 2.0f;
+    num9 = 0.3f + num9 * 0.3f;
+    mask = VUtils::Color(0.0f, num9, 0.0f, 0.0f);
+    return num5;
+}
+
+float GeoManager::GetDeepNorthHeightPregenerate(float wx, float wy, bool riverPregen)
 {
     float num = wx;
     float num2 = wy;
     float num3 = this->GetBaseHeight(wx, wy);
+    if (!riverPregen)
+        num3 += 0.1f;
     wx = (float)((double)wx + 100000.0 + (double)this->m_offset3);
     wy = (float)((double)wy + 100000.0 + (double)this->m_offset3);
     double num4 = (double)wx;
@@ -1011,7 +1052,7 @@ float GeoManager::GetDeepNorthHeight(float wx, float wy)
 double GeoManager::CreateAshlandsGap(float wx, float wy)
 {
     double num = (double)WorldAngle(wx, wy) * 100.0;
-    double num2 = (double)VUtils::Math::magnitude(wx, wy + ashlandsYOffset) - ((double)ashlandsMinDistance + num);
+    double num2 = (double)VUtils::Math::Length(wx, wy + ashlandsYOffset) - ((double)ashlandsMinDistance + num);
     num2 = VUtils::Math::Clamp01(std::abs(num2) / 400.0);
     return VUtils::Math::MathfLikeSmoothStep(0.0, 1.0, (double)((float)num2));
 }
@@ -1019,7 +1060,7 @@ double GeoManager::CreateAshlandsGap(float wx, float wy)
 double GeoManager::CreateDeepNorthGap(float wx, float wy)
 {
     double num = (double)WorldAngle(wx, wy) * 100.0;
-    double num2 = (double)VUtils::Math::magnitude(wx, wy + 4000.0f) - (12000.0 + num);
+    double num2 = (double)VUtils::Math::Length(wx, wy + 4000.0f) - (12000.0 + num);
     num2 = VUtils::Math::Clamp01(std::abs(num2) / 400.0);
     return VUtils::Math::MathfLikeSmoothStep(0.0, 1.0, (double)((float)num2));
 }

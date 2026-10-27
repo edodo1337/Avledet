@@ -48,6 +48,8 @@ project(avledet)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# world generation ports Unity float math bit exact, no fused multiply-add
+add_compile_options(-ffp-contract=off)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CXX_EXTENSIONS OFF)
 
@@ -158,6 +160,7 @@ find_package(quill CONFIG REQUIRED)
 find_package(magic_enum CONFIG REQUIRED)
 find_package(unordered_dense CONFIG REQUIRED) # https://github.com/martinus/unordered_dense?tab=readme-ov-file#21-installing-using-cmake
 find_package(isptr CONFIG REQUIRED) #intrusive pointer
+find_package(nlohmann_json CONFIG REQUIRED)
 
 
 

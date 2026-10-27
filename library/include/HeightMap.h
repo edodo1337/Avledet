@@ -165,6 +165,27 @@ class Heightmap
 
     bool GetWorldNormal(Vector3f worldPos, Vector3f &normal);
 
+    // vanilla TerrainVSModifier: the modifier reaches this zone
+    bool TerrainVSModifier(TerrainMod const &mod) const;
+    // vanilla Regenerate: base heights and mask, then the modifiers in their sorted order
+    void Regenerate(std::vector<TerrainMod const *> const &mods);
+    bool m_queued = false;// a modifier was added, regenerate on the next ForceGenerateAll
+
+    // paint mask is 65x65 like the heights (vanilla m_paintMask texture)
+    avledet::util::Color const &MaskPixel(std::int32_t x, std::int32_t y) const;
+    void WorldToVertexMask(Vector3f worldPos, std::int32_t &x, std::int32_t &y) const;
+
+  private:
+    void ModLevel(Vector3f worldPos, float radius, bool square);
+    void ModSmooth(Vector3f worldPos, float radius, float power);
+    void ModPaint(Vector3f worldPos, float radius, TerrainModifier::PaintType type, bool heightCheck, float strength);
+
+  public:
+
+    // Vanilla raycast down on the collision mesh: height inside the triangle and its face normal
+    //  Returns false if the position outside of this heightmap
+    bool GetGroundData(Vector3f worldPos, float &height, Vector3f &normal);
+
     // TOOD either implement or remove
     TerrainComp GetAndCreateTerrainCompiler();
 };

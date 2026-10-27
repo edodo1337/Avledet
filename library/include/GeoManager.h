@@ -22,6 +22,8 @@
 
 class GeoManager : public avledet::util::IManager<GeoManager>
 {
+    friend void probe_dump(char const *dir);// worldgen probe reads internals
+
     // TODO make private
   public:
     struct River
@@ -63,6 +65,7 @@ class GeoManager : public avledet::util::IManager<GeoManager>
     //std::int32_t m_streamSeed;
     VUtils::Random::State m_river_random;
     VUtils::Random::State m_stream_random;
+    std::int32_t m_streamSeed{};
 
     std::unique_ptr<avledet::util::FastNoise> m_noiseGen;
 
@@ -157,9 +160,9 @@ public:
 
     float GetHeight(float wx, float wy);
     float GetHeight(float wx, float wy, avledet::util::Color& mask);
-    float GetPregenerationHeight(float wx, float wy);
+    float GetPregenerationHeight(float wx, float wy, bool riverPreGen);
 
-    float GetBiomeHeight(VUtils::Biome biome, float wx, float wy, avledet::util::Color& mask, bool preGeneration = false);
+    float GetBiomeHeight(VUtils::Biome biome, float wx, float wy, avledet::util::Color& mask, bool preGeneration = false, bool riverPreDN = true);
 
 private:
     void VersionSetup(int version);
@@ -169,12 +172,12 @@ private:
     std::vector<Vector2f> MergePoints(std::vector<Vector2f>& points, float range);
     int FindClosest(const std::vector<Vector2f>& points, const Vector2f& p, float maxDistance);
 
-    std::vector<River> PlaceStreams();
-    bool FindStreamEndPoint(int iterations, float minHeight, float maxHeight,
+    std::vector<River> PlaceStreams(bool isDN);
+    bool FindStreamEndPoint(bool riverPreGen, int iterations, float minHeight, float maxHeight,
                             const Vector2f& start, float minLength, float maxLength,
                             Vector2f& end);
 
-    bool FindStreamStartPoint(int iterations, float minHeight, float maxHeight,
+    bool FindStreamStartPoint(bool riverPreGen, int iterations, float minHeight, float maxHeight,
                               Vector2f& p, float& starth);
 
     std::vector<River> PlaceRivers();
@@ -193,7 +196,9 @@ private:
 
     bool IsRiverAllowed(const Vector2f& p0, const Vector2f& p1, float step, float heightLimit);
 
-    void RenderRivers(const std::vector<River>& rivers);
+    // 1.0: streams are rendered in two passes, outside and inside the Deep North
+    enum class RiverAdd { All, SkipDeepNorth, OnlyDeepNorth };
+    void RenderRivers(const std::vector<River>& rivers, RiverAdd addRule = RiverAdd::All);
 
     void AddRiverPoint(avledet::util::Map<Vector2i, std::vector<RiverPoint>>& riverPoints,
                        const Vector2f& p, float r, const River& river);
@@ -227,7 +232,8 @@ private:
     float GetOceanHeight(float wx, float wy);
     float BaseHeightTilt(float wx, float wy);
     float GetSnowMountainHeight(float wx, float wy);
-	float GetDeepNorthHeight(float wx, float wy);
+	float GetDeepNorthHeightPregenerate(float wx, float wy, bool riverPregen);
+	float GetDeepNorthHeight(float wx, float wy, avledet::util::Color &mask);
 
 	double CreateAshlandsGap(float wx, float wy);
 	double CreateDeepNorthGap(float wx, float wy);

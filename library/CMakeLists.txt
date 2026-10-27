@@ -89,6 +89,7 @@ target_link_libraries(avledet_library
         ${STEAMWORKS_SDK_SHARED_DIR}
         ZLIB::ZLIB
         yaml-cpp::yaml-cpp
+        nlohmann_json::nlohmann_json
         magic_enum::magic_enum
         Tracy::TracyClient
         $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static>

@@ -17,7 +17,8 @@
     #include "ZDOManager.h"
     #include "ZoneManager.h"
 
-DungeonGenerator::DungeonGenerator(Dungeon const &dungeon, ZDO::reference zdo) :
+DungeonGenerator::DungeonGenerator(Dungeon const &dungeon, ZDO::reference zdo, bool randomDamage) :
+    m_random_damage(randomDamage),
     m_rot(zdo->get_rotation()),
     m_pos(zdo->get_position()),
     m_dungeon(dungeon),
@@ -30,16 +31,22 @@ DungeonGenerator::DungeonGenerator(Dungeon const &dungeon, ZDO::reference zdo) :
     //this->m_generatedSeed = seed + (int)m_pos.x * -4271 + (int)m_pos.y * 9187 + (int)m_pos.z * -2134;
 
     this->m_zone_center   = ZoneManager::ZoneToWorldPos(zone);
-    this->m_zone_center.y = m_pos.y;// -this->m_dungeon.m_originalPosition.y;
+    // vanilla SpawnLocation overrides m_originalPosition with the generator position in the location
+    this->m_zone_center.y = m_pos.y
+                            - (m_dungeon.m_use_custom_interior_transform ? m_dungeon.m_original_position.y
+                                                                         : m_dungeon.m_generator_original_position.y);
 }
 
 // TODO generate seed during start
 avledet::util::Hash DungeonGenerator::GetSeed()
 {
     if (AVL_CONFIG.m_dng_seeded) {
-        auto seed = GeoManager::instance().GetSeed();
-        //auto zone = ZoneManager::WorldToZonePos(m_pos);
-        return seed + (int) m_pos.x * -4271 + (int) m_pos.y * 9187 + (int) m_pos.z * -2134;
+        // int math wraps like in C#
+        auto zone = ZoneManager::WorldToZonePos(m_pos);
+        std::uint32_t seed = (std::uint32_t) GeoManager::instance().GetSeed() + (std::uint32_t) (zone.x * 4271)
+                             + (std::uint32_t) (zone.y * -7187) + (std::uint32_t) ((int) m_pos.x * -4271)
+                             + (std::uint32_t) ((int) m_pos.y * 9187) + (std::uint32_t) ((int) m_pos.z * -2134);
+        return (std::int32_t) seed;
     } else {
         return VUtils::Random::State().range(INT_MIN, INT_MAX);
     }
@@ -53,9 +60,11 @@ void DungeonGenerator::Generate()
 void DungeonGenerator::DungeonGenerator::Generate(avledet::util::Hash seed)
 {
     VUtils::Random::State state(seed);
+    LOG_INFO(AVL_LOGGER, "Generating {}, seed: {}", m_dungeon.m_prefab.get().m_name, (std::int32_t) seed);
 
     this->GenerateRooms(state);
     this->Save();
+    ZoneManager::instance().SnappAll();
 
     //this->m_generatedTime = steady_clock::now();
 
@@ -279,9 +288,10 @@ void DungeonGenerator::GenerateCampRadial(VUtils::Random::State &state)
     int num4   = num3 * 20;
     int num5   = 0;
     for (int i = 0; i < num4; i++) {
-        Vector3f vector = this->m_pos
-                          + Quaternion::euler(0.f, state.range(0, 360), 0.f) * Vector3f::FORWARD
-                                    * state.range(0.f, num - this->m_dungeon.m_perimeter_buffer);
+        // separate statements: the order of two random calls in one expression is unspecified
+        float yaw       = (float) state.range(0, 360);
+        float dist      = state.range(0.f, num - this->m_dungeon.m_perimeter_buffer);
+        Vector3f vector = this->m_pos + Quaternion::euler(0.f, yaw, 0.f) * Vector3f::FORWARD * dist;
 
         auto randomWeightedRoom = this->GetRandomWeightedRoom(state, false);
         if (randomWeightedRoom) {
@@ -400,8 +410,7 @@ void DungeonGenerator::Save()
         Quaternion rot = instance->m_rot;
 
         if (m_dungeon.m_algorithm == Dungeon::Algorithm::Dungeon) {
-            std::tie(pos, rot) = VUtils::Physics::LocalToGlobal(instance->m_pos, instance->m_rot, this->m_pos,
-                                                                this->m_rot);
+            std::tie(pos, rot) = VUtils::Physics::LocalToGlobal(instance->m_pos, instance->m_rot, Vector3f::ZERO, Quaternion::IDENTITY);
         }
 
         auto hash = room.GetHash();
@@ -449,10 +458,14 @@ void DungeonGenerator::PlaceDoors(VUtils::Random::State &state)
         } else if ((doorDef->m_chance <= 0 || state.value() <= doorDef->m_chance)
                    && (doorDef->m_chance > 0 || state.value() <= this->m_dungeon.m_door_chance)) {
             auto global = VUtils::Physics::LocalToGlobal(
-                    roomConnection.get().m_pos, roomConnection.get().m_rot, this->m_pos, this->m_rot);
+                    roomConnection.get().m_pos, roomConnection.get().m_rot, Vector3f::ZERO, Quaternion::IDENTITY);
 
-            auto &&zdo = ZdoManager::instance().Instantiate(doorDef->m_prefab, global.first);
-            zdo->set_rotation(global.second);
+            for (auto &&view : doorDef->m_views) {
+                auto &&zdo = ZdoManager::instance().Instantiate(view.m_prefabHash,
+                                                                global.first + global.second * view.m_pos);
+                zdo->set_rotation(global.second * view.m_rot);
+                ZoneManager::instance().AwakeRandom(state, *zdo, m_random_damage);
+            }
             num++;
         }
     }
@@ -501,10 +514,11 @@ void DungeonGenerator::PlaceEndCaps(VUtils::Random::State &state)
                     }
 
                     if (!flag) {
-                        LOG_WARNING(AVL_LOGGER, "Cyclic detected: Door mismatch for cyclic room");
+                        this->PlaceRoom(weightedRoom, vector, rot, roomConnection.get());
+                        LOG_INFO(AVL_LOGGER, "Cyclic detected: door mismatch, placing divider {}", weightedRoom.m_name);
                     }
                 } else {
-                    LOG_WARNING(AVL_LOGGER, "Cyclic detected: Door mismatch for cyclic room");
+                    LOG_WARNING(AVL_LOGGER, "Cyclic detected: door mismatch, but no dividers defined");
                 }
             } else {
                 LOG_INFO(AVL_LOGGER, "Cyclic detected: Door types successfully match");
@@ -513,6 +527,13 @@ void DungeonGenerator::PlaceEndCaps(VUtils::Random::State &state)
             ++itr1;
         } else {
             auto &&tempRooms = this->FindEndCaps(state, roomConnection.get().m_connection);
+            // vanilla throws here, skip the connection instead
+            if (tempRooms.empty() && this->m_dungeon.m_alternative_functionality) {
+                LOG_WARNING(AVL_LOGGER, "No end caps for '{}' in {}", roomConnection.get().m_connection.get().m_type,
+                            m_dungeon.m_prefab.get().m_name);
+                ++itr1;
+                continue;
+            }
             bool flag2       = false;
 
             bool erased = false;
@@ -567,9 +588,7 @@ std::vector<std::reference_wrapper<Room const>> DungeonGenerator::FindDividers(V
     while (i > 1) {
         i--;
         int index    = state.range(0, i);
-        auto &&value = rooms[index];
-        rooms[index] = rooms[i];
-        rooms[i]     = value;
+        std::swap(rooms[index], rooms[i]);
     }
 
     return rooms;
@@ -590,9 +609,7 @@ DungeonGenerator::FindEndCaps(VUtils::Random::State &state, RoomConnection const
     while (i > 1) {
         i--;
         int index    = state.range(0, i);
-        auto &&value = rooms[index];
-        rooms[index] = rooms[i];
-        rooms[i]     = value;
+        std::swap(rooms[index], rooms[i]);
     }
 
     return rooms;
@@ -616,7 +633,9 @@ void DungeonGenerator::PlaceStartRoom(VUtils::Random::State &state)
 
     Vector3f pos;
     Quaternion rot;
-    this->CalculateRoomPosRot(entrance, Vector3f::ZERO, Quaternion::IDENTITY, pos, rot);
+    // world frame like vanilla (start from the generator transform), so the local-to-global
+    // conversions below are identities and floats match the game
+    this->CalculateRoomPosRot(entrance, this->m_pos, this->m_rot, pos, rot);
 
     // TODO room.POS and room.ROT are ultimately redundant
     auto global = VUtils::Physics::LocalToGlobal(entrance.m_localPos, entrance.m_localRot, roomData.m_pos,
@@ -705,8 +724,10 @@ bool DungeonGenerator::PlaceRoom(VUtils::Random::State &state, decltype(m_open_c
     const auto& size = room.m_size;
 
     if (size.x != 0 && size.z != 0 && this->TestCollision(room, pos, rot)) {
+        LOG_DEBUG(AVL_LOGGER, "try {} False", room.m_name);
         return false;
     }
+    LOG_DEBUG(AVL_LOGGER, "try {} True", room.m_name);
 
     //auto&& snap = [](float v, float eps = 0.001)
     //{
@@ -774,16 +795,40 @@ bool DungeonGenerator::PlaceRoom(VUtils::Random::State &state, decltype(m_open_c
     return true;
 }
 
+int DungeonGenerator::RoomSeed(Vector3f worldPos)
+{
+    // vanilla: relative to the generator for custom interiors, else world
+    Vector3f pos = m_dungeon.m_generator_custom_interior ? worldPos - this->m_pos : worldPos;
+    // int math wraps like in C#
+    std::uint32_t seed = (std::uint32_t) ((int) pos.x * 4271) + (std::uint32_t) ((int) pos.y * 9187)
+                         + (std::uint32_t) ((int) pos.z * 2134);
+    if (m_dungeon.m_add_base_seed_to_random_spawn)
+        seed += (std::uint32_t) this->GetSeed();
+    return (std::int32_t) seed;
+}
+
+std::vector<bool> DungeonGenerator::RollRoom(Room const &room, VUtils::Random::State &state, Vector3f worldPos,
+                                             Quaternion worldRot, std::vector<Prefab::Instance> *offProxies,
+                                             avledet::gen::RollResult *roll)
+{
+    return room.m_randoms.roll(state, room.m_netViews.size(), worldPos, worldRot, m_dungeon.m_themes, offProxies,
+                               roll);
+}
+
 void DungeonGenerator::PlaceRoom(Room const &room, Vector3f pos, Quaternion rot)
 {
-    // TODO seed is only useful for RandomSpawn
-    int seed = (int) pos.x * 4271 + (int) pos.y * 9187 + (int) pos.z * 2134;
+    int seed = this->RoomSeed(pos);
+    VUtils::Random::State state(seed);
+    std::vector<Prefab::Instance> offProxies;
+    avledet::gen::RollResult roll;
+    auto active = this->RollRoom(room, state, pos, rot, &offProxies, &roll);
+    LOG_DEBUG(AVL_LOGGER, "room {} {} {} {} {} {} q {} {} {} {} seed {}", m_dungeon.m_prefab.get().m_name, room.m_name, pos.x,
+              pos.y, pos.z, rot.euler_angles().y, rot.x, rot.y, rot.z, rot.w, seed);
 
-    //VUtils::Random::State state(seed);
-    //for (auto&& randomSpawn : room.m_randomSpawns)
-    //	randomSpawn.Randomize();
-
-    for (auto &&view : room.m_netViews) {
+    for (std::size_t i = 0; i < room.m_netViews.size(); i++) {
+        if (!active[i])
+            continue;
+        auto &&view     = room.m_netViews[i];
         Vector3f pos1   = pos + rot * view.m_pos;
         Quaternion rot1 = rot * view.m_rot;
 
@@ -791,9 +836,37 @@ void DungeonGenerator::PlaceRoom(Room const &room, Vector3f pos, Quaternion rot)
         //  see the below PlaceRoom(room, pos, rot, CONN)
         //  why does that one convert to global coords? ie, LocalToGlobal used,
         //  but this one does not?!?
-        auto &&zdo = ZdoManager::instance().Instantiate(view.m_prefabHash, pos1);
+        auto &&zdo = ZdoManager::instance().Instantiate(view.m_prefabHash, pos1, view.m_scale);
         zdo->set_rotation(rot1);
+        ZoneManager::instance().AwakeRandom(state, *zdo, m_random_damage);
+        ZoneManager::instance().RegisterSpawned(*zdo);
+        for (auto &&[view, offset] : room.m_randoms.m_snaps)
+            if (view == (std::int32_t) i)
+                ZoneManager::instance().AddSnapper(zdo, offset);
+        if (zdo->get_prefab().get().AllFlagsPresent(Prefab::Flag::WEAR_N_TEAR))
+            zdo->set(avledet::util::hashes::ZDO::WearNTear::PRE_SNOW, true);
+        for (auto &&[parent, children] : room.m_randoms.m_nested) {
+            if (parent != (std::int32_t) i)
+                continue;
+            for (auto j : children) {
+                if (!active[j])
+                    continue;
+                auto &&child = room.m_netViews[j];
+                auto &&nzdo  = ZdoManager::instance().Instantiate(child.m_prefabHash, pos + rot * child.m_pos, child.m_scale);
+                nzdo->set_rotation(rot * child.m_rot);
+                ZoneManager::instance().AwakeRandom(state, *nzdo, m_random_damage);
+                ZoneManager::instance().RegisterSpawned(*nzdo);
+            }
+        }
     }
+    // the room prefab instantiate turns these inactive views on, Awake creates their ZDOs,
+    // and its TerrainModifiers go live
+    for (auto &&view : offProxies) {
+        auto &&zdo = ZdoManager::instance().Instantiate(view.m_prefabHash, pos + rot * view.m_pos);
+        zdo->set_rotation(rot * view.m_rot);
+        ZoneManager::instance().RegisterSpawned(*zdo);
+    }
+    ZoneManager::instance().RegisterVisuals(room.m_randoms, roll, pos, rot);
 
     // TODO this might be redundant for dummy 'dungeons' (plains villages shouldnt be considered dungeons)
     auto component2 = std::make_unique<RoomInstance>(room, pos, rot, 0, seed);
@@ -803,15 +876,8 @@ void DungeonGenerator::PlaceRoom(Room const &room, Vector3f pos, Quaternion rot)
 void DungeonGenerator::PlaceRoom(Room const &room, Vector3f pos, Quaternion rot,
                                  RoomConnectionInstance const &fromConnection)
 {
-    // wtf is the point of this?
-    //	only setting a seed? seems really extraneous
-    //Vector3f vector = pos;
-    //if (this->m_dungeon.m_useCustomInteriorTransform)
-    //vector -= this->m_pos;
-    //int seed = (int)vector.x * 4271 + (int)vector.y * 9187 + (int)vector.z * 2134;
-
-    // TODO seed is only useful for RandomSpawn
-    int seed = (int) pos.x * 4271 + (int) pos.y * 9187 + (int) pos.z * 2134;
+    auto [worldPos, worldRot] = VUtils::Physics::LocalToGlobal(pos, rot, Vector3f::ZERO, Quaternion::IDENTITY);
+    int seed                  = this->RoomSeed(worldPos);
 
     // Per Unity docs
     //  https://docs.unity3d.com/ScriptReference/MonoBehaviour.Awake.html
@@ -824,16 +890,54 @@ void DungeonGenerator::PlaceRoom(Room const &room, Vector3f pos, Quaternion rot,
     //	randomSpawn.Randomize();
 
     if (AVL_CONFIG.m_dng_rooms_decorated) {
-        for (auto &&view : room.m_netViews) {
+        VUtils::Random::State state(seed);
+        std::vector<Prefab::Instance> offProxies;
+        avledet::gen::RollResult roll;
+        auto active = this->RollRoom(room, state, worldPos, worldRot, &offProxies, &roll);
+        LOG_DEBUG(AVL_LOGGER, "room {} {} {} {} {} {} q {} {} {} {} seed {}", m_dungeon.m_prefab.get().m_name, room.m_name,
+                  worldPos.x, worldPos.y, worldPos.z, worldRot.euler_angles().y, worldRot.x, worldRot.y, worldRot.z,
+                  worldRot.w, seed);
+        for (std::size_t i = 0; i < room.m_netViews.size(); i++) {
+            if (!active[i])
+                continue;
+            auto &&view     = room.m_netViews[i];
             Vector3f pos1   = pos + rot * view.m_pos;
             Quaternion rot1 = rot * view.m_rot;
 
             // Prefabs can be instantiated exactly in world space (not local room space)
-            auto [gPos, gRot] = VUtils::Physics::LocalToGlobal(pos1, rot1, this->m_pos, this->m_rot);
+            auto [gPos, gRot] = VUtils::Physics::LocalToGlobal(pos1, rot1, Vector3f::ZERO, Quaternion::IDENTITY);
 
-            auto &&zdo = ZdoManager::instance().Instantiate(view.m_prefabHash, gPos);
+            auto &&zdo = ZdoManager::instance().Instantiate(view.m_prefabHash, gPos, view.m_scale);
             zdo->set_rotation(gRot);
+            ZoneManager::instance().AwakeRandom(state, *zdo, m_random_damage);
+            ZoneManager::instance().RegisterSpawned(*zdo);
+            for (auto &&[view, offset] : room.m_randoms.m_snaps)
+                if (view == (std::int32_t) i)
+                    ZoneManager::instance().AddSnapper(zdo, offset);
+            if (zdo->get_prefab().get().AllFlagsPresent(Prefab::Flag::WEAR_N_TEAR))
+                zdo->set(avledet::util::hashes::ZDO::WearNTear::PRE_SNOW, true);
+            for (auto &&[parent, children] : room.m_randoms.m_nested) {
+                if (parent != (std::int32_t) i)
+                    continue;
+                for (auto j : children) {
+                    if (!active[j])
+                        continue;
+                    auto &&child = room.m_netViews[j];
+                    auto [cPos, cRot] = VUtils::Physics::LocalToGlobal(pos + rot * child.m_pos, rot * child.m_rot, Vector3f::ZERO, Quaternion::IDENTITY);
+                    auto &&nzdo = ZdoManager::instance().Instantiate(child.m_prefabHash, cPos, child.m_scale);
+                    nzdo->set_rotation(cRot);
+                    ZoneManager::instance().AwakeRandom(state, *nzdo, m_random_damage);
+                    ZoneManager::instance().RegisterSpawned(*nzdo);
+                }
+            }
         }
+        for (auto &&view : offProxies) {
+            auto [gPos, gRot] = VUtils::Physics::LocalToGlobal(pos + rot * view.m_pos, rot * view.m_rot, Vector3f::ZERO, Quaternion::IDENTITY);
+            auto &&zdo        = ZdoManager::instance().Instantiate(view.m_prefabHash, gPos);
+            zdo->set_rotation(gRot);
+            ZoneManager::instance().RegisterSpawned(*zdo);
+        }
+        ZoneManager::instance().RegisterVisuals(room.m_randoms, roll, worldPos, worldRot);
     }
 
     auto component2 = std::make_unique<RoomInstance>(room, pos, rot, fromConnection.m_placeOrder + 1, seed);
@@ -855,52 +959,24 @@ void DungeonGenerator::AddOpenConnections(RoomInstance &newRoom, RoomConnectionI
     }
 }
 
-// Determine whether a room (with center at origin of room) is completely contained within a zone
-// TODO rename something better, wtf is 'IsInsideDungeon'
-//	this just makes sure that a rotated rectangle is within the zone
+// Vanilla IsInsideDungeon: the room box is inside the dungeon bounds
 bool DungeonGenerator::IsInsideZone(Room const &room, Vector3f pos, Quaternion rot)
 {
     if (!AVL_CONFIG.m_dng_rooms_zone_bounded)
         return true;
 
-    Vector3f semiSize = room.m_size * .5f;
-
-    if (room.m_endCap)
-        semiSize *= AVL_CONFIG.m_dng_endcaps_inset_ratio;
-
-    if (pos.y + semiSize.y < m_zone_center.y - m_zone_size.y * .5f
-        || pos.y - semiSize.y > m_zone_center.y + m_zone_size.y * .5f)
-        return false;
-
-    Vector3f a = pos + rot * Vector3f(-semiSize.x, 0, -semiSize.z);
-    Vector3f b = pos + rot * Vector3f(-semiSize.x, 0, semiSize.z);
-    Vector3f c = pos + rot * Vector3f(semiSize.x, 0, semiSize.z);
-    Vector3f d = pos + rot * Vector3f(semiSize.x, 0, -semiSize.z);
-
-    //Vector3f e = pos + rot * Vector3f(-semiSize.x,	0,	-semiSize.z);
-    //Vector3f f = pos + rot * Vector3f(-semiSize.x,	0,	semiSize.z);
-    //Vector3f g = pos + rot * Vector3f(semiSize.x,		0,	semiSize.z);
-    //Vector3f h = pos + rot * Vector3f(semiSize.x,		0,	-semiSize.z);
-
-    static auto &&inRectSemi = [](Vector3f const &semiSize, Vector3f const &pos, Vector3f const &point) {
-        return point.x >= pos.x - semiSize.x
-               && point.x <= pos.x + semiSize.x
-               //&& point.y >= pos.y - semiSize.y && point.y <= pos.y + semiSize.y
-               && point.z >= pos.z - semiSize.z && point.z <= pos.z + semiSize.z;
-    };
-
-    Vector3f semiZone = m_zone_size * .5f;
-
-    return inRectSemi(semiZone, m_zone_center, a) && inRectSemi(semiZone, m_zone_center, b)
-           && inRectSemi(semiZone, m_zone_center, c) && inRectSemi(semiZone, m_zone_center, d);
-    //&& inRectSemi(semiZone, m_zoneCenter, e)
-    //&& inRectSemi(semiZone, m_zoneCenter, f)
-    //&& inRectSemi(semiZone, m_zoneCenter, g)
-    //&& inRectSemi(semiZone, m_zoneCenter, h);
-
-    //return VUtils::Physics::RectInsideRect(
-    //	m_zoneSize, m_zoneCenter, Quaternion::IDENTITY,
-    //	room.m_size, pos, rot);
+    // all 8 corners inside the bounds, edges inclusive (Unity Bounds.Contains)
+    Vector3f semi = room.m_size * .5f;
+    Vector3f min  = m_zone_center - m_dungeon.m_zone_size * .5f;
+    Vector3f max  = m_zone_center + m_dungeon.m_zone_size * .5f;
+    for (float sx : {semi.x, -semi.x})
+        for (float sy : {semi.y, -semi.y})
+            for (float sz : {semi.z, -semi.z}) {
+                Vector3f p = pos + rot * Vector3f(sx, sy, sz);
+                if (p.x < min.x || p.x > max.x || p.y < min.y || p.y > max.y || p.z < min.z || p.z > max.z)
+                    return false;
+            }
+    return true;
 }
 
 //[[deprecated("axis aligned only")]]
@@ -927,7 +1003,7 @@ bool DungeonGenerator::TestCollision(Room const &room, Vector3f pos, Quaternion 
         Quaternion newRot = rot;
 
         if (m_dungeon.m_algorithm == Dungeon::Algorithm::Dungeon)
-            std::tie(newPos, newRot) = VUtils::Physics::LocalToGlobal(pos, rot, this->m_pos, this->m_rot);
+            std::tie(newPos, newRot) = VUtils::Physics::LocalToGlobal(pos, rot, Vector3f::ZERO, Quaternion::IDENTITY);
 
         // Constrain dungeon within zone
         if (!this->IsInsideZone(room, newPos, newRot))
@@ -972,7 +1048,7 @@ Room const *DungeonGenerator::GetRandomWeightedRoom(VUtils::Random::State &state
             return roomData2;
     }
 
-    std::unreachable();
+    return tempRooms[0];
 }
 
 Room const *DungeonGenerator::GetRandomWeightedRoom(VUtils::Random::State &state,
@@ -1010,10 +1086,8 @@ Room const &DungeonGenerator::GetWeightedRoom(VUtils::Random::State &state,
             return roomData2;
     }
 
-    std::unreachable();
-
-    //throw std::runtime_error("unexpected");
-    //return *m_tempRooms[0];
+    // vanilla falls back to the first room (float rounding), throws on empty
+    return rooms.at(0);
 }
 
 Room const *DungeonGenerator::GetRandomRoom(VUtils::Random::State &state,

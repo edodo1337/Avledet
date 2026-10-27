@@ -103,7 +103,6 @@ public:
 
     bool m_dng_enabled {};
     bool m_dng_endcaps_enabled {};
-    float m_dng_endcaps_inset_ratio {};
     bool m_dng_doors_enabled {};
     bool m_dng_rooms_flipped {};
     bool m_dng_rooms_zone_bounded {};

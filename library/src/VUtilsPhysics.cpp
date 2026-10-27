@@ -397,7 +397,7 @@ namespace VUtils::Physics {
     {
 
         auto childPos = parentPos + parentRot * (childLocalPos);
-        auto childRot = childLocalRot * parentRot;
+        auto childRot = parentRot * childLocalRot;
 
         return {childPos, childRot};
     }

@@ -179,10 +179,10 @@ void HMBuildManager::Build(BaseHeightmap *base, ZoneID zone)
 
             base->m_baseHeights[(std::size_t)(ry * Heightmap::E_WIDTH + rx)] = height;
 
-            // color mask is a bit smaller, so check bounds
-            if (rx < ZoneManager::UNITS_PER_ZONE && ry < ZoneManager::UNITS_PER_ZONE) {
-                base->m_base_mask[(std::size_t)(ry * ZoneManager::UNITS_PER_ZONE + rx)] = colorMask;
-            }
+            // vanilla keeps the mask in an RGBA32 texture of the same 65x65 size, so 8 bit per channel
+            auto q = [](float v) { return std::round(std::clamp(v, 0.f, 1.f) * 255.f) / 255.f; };
+            base->m_base_mask[(std::size_t)(ry * Heightmap::E_WIDTH + rx)]
+                    = avledet::util::Color(q(colorMask.r), q(colorMask.g), q(colorMask.b), q(colorMask.a));
         }
     }
 }

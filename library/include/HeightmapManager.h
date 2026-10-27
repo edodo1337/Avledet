@@ -13,7 +13,20 @@ class HeightmapManager : public avledet::util::IManager<HeightmapManager>
     //avledet::util::Set<ZoneID> m_population;
     avledet::util::Map<ZoneID, std::unique_ptr<Heightmap>> m_heightmaps;
 
+    // live terrain modifiers (vanilla TerrainModifier instances), applied on regeneration
+    std::vector<TerrainMod> m_mods;
+    std::int64_t m_modCounter = 0;
+
+    void Regenerate(Heightmap &heightmap);
+    Heightmap *Adopt(ZoneID zone, std::unique_ptr<Heightmap> heightmap);
+
   public:
+    // vanilla TerrainModifier.Awake: registers and pokes the heightmaps (regenerated later).
+    // Modifiers with a ZNetView sort by creation time, pass created = true for them.
+    void AddModifier(TerrainMod mod, bool created);
+    // vanilla Heightmap.ForceGenerateAll: regenerate the poked heightmaps
+    void ForceGenerateAll();
+
     //void ForceGenerateAll();
     void ForceQueuedRegeneration();
 

@@ -12,6 +12,9 @@ namespace VUtils::Math {
 
     float magnitude(float x, float y);
 
+    // DUtils.Length: sqrt in double, one rounding to float
+    float Length(float x, float y);
+
     double magnitude(double x, double y);
 
     float sq_distance_to(float x1, float y1, float x2, float y2);

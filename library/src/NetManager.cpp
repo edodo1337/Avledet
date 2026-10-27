@@ -82,12 +82,13 @@ void NetManager::SendPlayerList()
             for (auto &&peer : m_onlinePeers) {
                 writer.write(peer->m_name);
                 writer.write(peer->m_characterID);
-                writer.write("steam_" + peer->m_socket->get_host_name());
+                writer.write("Steam_" + peer->m_socket->get_host_name());
                 auto &&platformItr = peer->m_syncData.find("platformDisplayName");
                 auto &&platform    = platformItr != peer->m_syncData.end() ? platformItr->second : "";
                 writer.write(platform);           // ...?
                 auto forcedDisplayName = platform;//TODO the algo / usage is kinda weird / convoluted
                 writer.write(forcedDisplayName);  //TODO
+                writer.write(peer->m_playfabId);
                 writer.write(peer->IsMapVisible() || AVL_CONFIG.playerListForceVisible);
                 if (peer->IsMapVisible() || AVL_CONFIG.playerListForceVisible) {
                     if (AVL_CONFIG.playerListSmoothUpdating >= 2s)
@@ -127,6 +128,10 @@ void NetManager::SendPeerInfo(Peer::Ptr peer)
         writer.write(VConstants::NETWORK);
         writer.write(Vector3f::ZERO);      // dummy
         writer.write(std::string_view(""));// dummy
+        writer.write(std::string_view(""));// playfab id, read and dropped by client
+        writer.write(SimulationDistance::ORIGINAL.m_near);
+        writer.write(SimulationDistance::ORIGINAL.m_far);
+        writer.write(SimulationDistance::ORIGINAL.m_classic);
 
         auto world = WorldManager::instance().GetWorld();
 
@@ -151,6 +156,12 @@ void NetManager::OnPeerConnect(Peer::Ptr peer)
     }
 
     AVL_DISPATCH_WEBHOOK(peer->m_name + " has joined");
+
+    // 1.0: client asks again whenever its graphics settings change
+    peer->Register("RPC_RequestValidSimulationDistance", [](Peer::Ptr peer, avledet::util::Bytes pkg) {
+        DataReader reader(pkg);
+        peer->SetSimDistance(reader);
+    });
 
     // Important
     peer->Register("ServerSyncedPlayerData", [](Peer::Ptr peer, avledet::util::Bytes pkg) {
@@ -177,7 +188,7 @@ void NetManager::OnPeerConnect(Peer::Ptr peer)
 
     // isnt 'ban' a command?
     //  it should be part of RemoteCommand
-    peer->Register("RemoteCommand",
+    peer->Register("RPC_RemoteCommand",
                    [](Peer::Ptr peer, std::string_view command) {
                        if (!peer->IsAdmin())
                            return peer->ConsoleMessage("You are not admin");

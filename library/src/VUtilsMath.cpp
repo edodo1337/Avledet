@@ -23,6 +23,11 @@ namespace VUtils::Math {
         return std::sqrt(sq_magnitude(x, y));
     }
 
+    float Length(float x, float y)
+    {
+        return (float) std::sqrt((double) x * (double) x + (double) y * (double) y);
+    }
+
     double magnitude(double x, double y)
     {
         return std::sqrt(sq_magnitude(x, y));
@@ -182,25 +187,6 @@ namespace VUtils::Math {
     // Ease-in-out function
     // t: [0, 1]
     // https://www.desmos.com/calculator/tgpfii21pt
-    static double myfade(float t)
-    {
-        return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
-    }
-
-    static double mylerp(float t, float a, float b)
-    {
-        return a + t * (b - a);
-    }
-
-    static double mygrad(int hash, float x, float y)
-    {
-        int h     = hash & 15;    // CONVERT LO 4 BITS OF HASH CODE
-        float u   = h < 8 ? x : y,// INTO 12 GRADIENT DIRECTIONS.
-                v = h < 4                ? y
-                    : h == 12 || h == 14 ? x
-                                         : 0;
-        return ((h & 1) == 0 ? u : -u) + ((h & 2) == 0 ? v : -v);
-    }
 
     static std::uint8_t p[] = {
             151, 160, 137, 91, 90, 15, 131, 13, 201, 95, 96, 53, 194, 233, 7, 225, 140, 36, 103, 30, 69, 142,
@@ -229,38 +215,53 @@ namespace VUtils::Math {
             239, 107, 49, 192, 214, 31, 181, 199, 106, 157, 184, 84, 204, 176, 115, 121, 50, 45, 127, 4, 150,
             254, 138, 236, 205, 93, 222, 114, 67, 29, 24, 72, 243, 141, 128, 195, 78, 66, 215, 61, 156, 180};
 
-    // type is casted to a float, idk whether statically, probably (bytes interpreted in place)
+    // Mathf.PerlinNoise, rebuilt from UnityPlayer.so (Unity 6, Valheim 1.0.20):
+    // everything is single precision, fade is t*(t*t) * ((t*6 - 15)*t + 10),
+    // lerps are a + t*(b - a). Must stay bit exact, biomes depend on it.
+    static float unity_fade(float t)
+    {
+        t = std::min(1.0f, t);
+        float t3 = t * (t * t);
+        return t3 * ((t * 6.0f + -15.0f) * t + 10.0f);
+    }
+
+    static float unity_grad(int hash, float x, float y)
+    {
+        int h   = hash & 15;
+        float u = h < 8 ? x : y;
+        float v = h < 4 ? y : (h == 12 || h == 14 ? x : 0.0f);
+        return ((h & 1) ? -u : u) + ((h & 2) ? -v : v);
+    }
+
     float PerlinNoise(float x, float y)
     {
         x = std::abs(x);
         y = std::abs(y);
 
-        int X = (int) x & 0xFF;
-        int Y = (int) y & 0xFF;
+        int ix = (int) x;
+        int iy = (int) y;
+        int X  = ix & 0xFF;
+        int Y  = iy & 0xFF;
 
-        x -= (int) x;
-        y -= (int) y;
+        x -= (float) ix;
+        y -= (float) iy;
 
         int A = p[X] + Y;
         int B = p[X + 1] + Y;
 
-        int BB = p[p[B + 1]];
-        int AB = p[p[A + 1]];
-        int BA = p[p[B + 0]];
-        int AA = p[p[A + 0]];
+        float gAA = unity_grad(p[p[A]], x, y);
+        float gBA = unity_grad(p[p[B]], x - 1.0f, y);
+        float gAB = unity_grad(p[p[A + 1]], x, y - 1.0f);
+        float gBB = unity_grad(p[p[B + 1]], x - 1.0f, y - 1.0f);
 
-        double u = myfade(x);
-        double v = myfade(y);
+        float u = unity_fade(x);
+        float v = unity_fade(y);
 
-        auto gradBB = mygrad(BB, x - 1, y - 1);
-        auto gradAB = mygrad(AB, x, y - 1);
-        auto gradBA = mygrad(BA, x - 1, y);
-        auto gradAA = mygrad(AA, x, y);
+        float x1 = gAA + u * (gBA - gAA);
+        float x2 = gAB + u * (gBB - gAB);
+        float res = x1 + v * (x2 - x1);
 
-        float res = (float) mylerp((float) v, (float) mylerp((float) u, (float) gradAA, (float) gradBA),
-                                   (float) mylerp((float) u, (float) gradAB, (float) gradBB));
-
-        return (res + .69f) / 1.483f;
+        return (res + 0.69f) / 1.483f;
     }
 
     double Remap(double value, double inLow, double inHigh, double outLow, double outHigh)
