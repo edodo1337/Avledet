@@ -1703,6 +1703,10 @@ void ZoneManager::AwakeRandom(VUtils::Random::State &state, ZDO &zdo, bool rando
         zdo.set(avledet::util::get_stable_hash("plantTime"), ticks);
     }
 
+    // Container.CheckForChanges runs in the spawn frame (InvokeRepeating, 0 s): UpdateUseVisual
+    if (m_containers.contains(prefab))
+        zdo.set(avledet::util::get_stable_hash("InUse"), (std::int32_t) 0);
+
     auto skip = [&](int n) {
         for (int i = 0; i < n; i++)
             state.next_float();

@@ -280,7 +280,9 @@ void ZDO::set_rotation(Quaternion rot)
     // the server sets it on objects it instantiates, where ZNetView.Awake saves transform.rotation:
     // the rotation setter normalized it the Unity way
     auto &&euler = avledet::unity::Normalize(rot).euler_angles();
-    if (euler != this->m_rotation) {
+    // Unity Vector3 == is approximate: a change below ~1e-5 degrees is not stored
+    float dx = this->m_rotation.x - euler.x, dy = this->m_rotation.y - euler.y, dz = this->m_rotation.z - euler.z;
+    if (!(dx * dx + dy * dy + dz * dz < 9.99999944e-11f)) {
         this->m_rotation = euler;
         this->_revise();
     }

@@ -445,8 +445,12 @@ ZDO::reference ZdoManager::_Instantiate(Vector3f position) noexcept
     for (;;) {
         zdoid.set_id(m_nextUid++);
         auto &&insert = _Instantiate(zdoid, position);
-        if (insert.second)
-            return ZDO::make_reference(insert.first);
+        if (insert.second) {
+            // CreateNewZDO: owned by the server until ReleaseNearbyZDOS hands it to a peer
+            auto &&zdo = ZDO::make_reference(insert.first);
+            zdo->_set_owner(AVL_ID);
+            return zdo;
+        }
     }
     std::unreachable();
 }
@@ -1156,7 +1160,7 @@ void ZdoManager::OnPeerQuit(Peer::Ptr peer)
 
         if (!zdo->is_persistent()
             && (!zdo->has_owner() || zdo->is_owner(peer->GetUserID())
-                || !NetManager::instance().FindPeerByUserID(zdo->get_owner()))) {
+                || (!zdo->is_owner(AVL_ID) && !NetManager::instance().FindPeerByUserID(zdo->get_owner())))) {
             itr = _DestroyZDO(itr);
         } else
             ++itr;
