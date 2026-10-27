@@ -1094,8 +1094,16 @@ void ZdoManager::OnNewPeer(Peer::Ptr peer)
             zdo->m_rev.set_data_rev(data_rev);
             zdo->m_rev.set_owner_rev(owner_rev);
 
-            // Unpack the ZDOs primary data
-            zdo->unpack(des, 0);
+            // Unpack the ZDOs primary data. A new ZDO that fails (unknown prefab, short data) is dropped:
+            // left in the map without a prefab it crashed the next save or disconnect
+            try {
+                zdo->unpack(des, 0);
+            } catch (std::exception const &e) {
+                LOG_WARNING(AVL_LOGGER, "Bad ZDO {} from {}: {}", zdoid, peer->m_name, e.what());
+                if (created)
+                    m_objectsByID.erase(zdo_itr);
+                continue;
+            }
 
             AVL_SCRIPT_EVENT(ScriptManager::Events::ZDOUnpacked, peer, zdo);
 

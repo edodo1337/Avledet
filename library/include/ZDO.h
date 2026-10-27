@@ -72,11 +72,10 @@ class ZDO
     class Rev
     {
       private:
-        // DataRevision: 0, OwnerRevision: 1
-        BitPack<std::uint32_t, 23, 32 - 23> m_pack;
-
-        static constexpr auto DATA_REVISION_PACK_INDEX  = 0;
-        static constexpr auto OWNER_REVISION_PACK_INDEX = 1;
+        // full widths like vanilla (uint, ushort): packed into 23 and 9 bits they wrapped, after 512
+        // owner changes clients ignored every later one
+        std::uint32_t m_dataRev {};
+        std::uint16_t m_ownerRev {};
 
       public:
         Rev();
@@ -93,11 +92,11 @@ class ZDO
     };
 
   private:
-    // 56 bytes
+    // 64 bytes
     ZDOID m_id;                                         // 16 bytes
     mutable std::int64_t m_owner {};                    // 8 bytes; most ZDOs have one (the server's at least)
     mutable Vector3f m_pos;                             // 12 bytes
-    mutable Rev m_rev;                                  // 4 bytes
+    mutable Rev m_rev;                                  // 8 bytes
     mutable Vector3f m_rotation;                        // 12 bytes
     mutable std::uint16_t m_refcnt {};                  // 2 bytes
     mutable std::uint16_t m_prefab_index = Prefab::NONE;// 2 bytes

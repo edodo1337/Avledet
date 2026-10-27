@@ -89,11 +89,10 @@ class ZdoManager : public avledet::util::IManager<ZdoManager>
         if (num != -1) {
             return &m_objectsBySector[num];
         }
+        // like vanilla FindObjects (TryGetValue): a lookup does not add an empty zone; it did for every
+        // zone around a peer far out, a map a spoofed position grew without end
         auto &&find = m_objectsBySectorOuter.find(zone);
-        if (find != m_objectsBySectorOuter.end()) {
-            return &find->second;
-        }
-        return &m_objectsBySectorOuter[zone];
+        return find != m_objectsBySectorOuter.end() ? &find->second : nullptr;
     }
 
     // Insert a ZDO into zone (internal)

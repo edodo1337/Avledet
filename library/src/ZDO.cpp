@@ -32,22 +32,22 @@ ZDO::Rev::Rev(std::uint32_t dataRev, std::uint16_t ownerRev)
 
 std::uint32_t ZDO::Rev::get_data_rev() const
 {
-    return m_pack.get<DATA_REVISION_PACK_INDEX>();
+    return m_dataRev;
 }
 
 std::uint16_t ZDO::Rev::get_owner_rev() const
 {
-    return m_pack.get<OWNER_REVISION_PACK_INDEX>();
+    return m_ownerRev;
 }
 
 void ZDO::Rev::set_data_rev(std::uint32_t dataRev)
 {
-    m_pack.set<DATA_REVISION_PACK_INDEX>(dataRev);
+    m_dataRev = dataRev;
 }
 
 void ZDO::Rev::set_owner_rev(std::uint16_t ownerRev)
 {
-    m_pack.set<OWNER_REVISION_PACK_INDEX>(ownerRev);
+    m_ownerRev = ownerRev;
 }
 
 void ZDO::Rev::rev_data()
