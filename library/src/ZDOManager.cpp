@@ -293,7 +293,8 @@ void ZdoManager::LoadChunks(std::filesystem::path const &dir, std::uint32_t save
     if (!opt)
         throw std::runtime_error("chunk index missing");
     DataReader index(std::move(*opt));
-    index.read<std::uint16_t>();
+    if (auto version = index.read<std::uint16_t>(); version > VConstants::WORLD)
+        throw std::runtime_error("chunks of a newer game: " + std::to_string(version));
     index.read<std::int32_t>();// total
     auto count = index.read<std::int32_t>();
 

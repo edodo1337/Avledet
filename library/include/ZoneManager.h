@@ -438,6 +438,8 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
     void Save(DataWriter &pkg);
     // startingKeys: server options of the .fwl2, active as global keys
     void Load(DataReader &reader, std::vector<std::string> const &startingKeys);
+    // the save says locations are not all placed (or of another version): ZNet runs GenerateLocations
+    bool m_locationsPending = false;
 
 
     // GlobalKeys before NonServerOption: world modifiers, kept in the world's starting keys

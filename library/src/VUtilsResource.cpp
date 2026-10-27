@@ -1,4 +1,8 @@
 #include <fstream>
+#if defined(__unix__)
+    #include <fcntl.h>
+    #include <unistd.h>
+#endif
 #include <iostream>
 #include <sstream>
 
@@ -49,7 +53,17 @@ namespace VUtils::Resource {
         file.close();
 
         // close() can discover errors that write()/flush() did not.
-        return !file.fail();
+        if (file.fail())
+            return false;
+#if defined(__unix__)
+        // Flush(flushToDisk) like vanilla FileWriter: after a power loss the .ok of a save must not point
+        // at chunk files the disk never got
+        if (int fd = ::open(path.c_str(), O_RDONLY); fd >= 0) {
+            ::fsync(fd);
+            ::close(fd);
+        }
+#endif
+        return true;
     }
 
     bool WriteFile(std::filesystem::path const &path, avledet::util::Bytes const &vec)

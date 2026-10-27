@@ -551,9 +551,11 @@ void ZoneManager::Load(DataReader &in, std::vector<std::string> const &startingK
     for (int i = 0; i < keys; i++)
         GlobalKeyAdd(pkg.read<std::string>());
     bool locationsGenerated = pkg.read<bool>();
-    if (!locationsGenerated || locationVersion != VConstants::LOCATION)
-        LOG_WARNING(AVL_LOGGER, "Locations of version {} (generated: {}), not regenerated here", locationVersion,
-                    locationsGenerated);
+    if (!locationsGenerated || locationVersion != VConstants::LOCATION) {
+        LOG_WARNING(AVL_LOGGER, "Locations of version {} (generated: {}), the unplaced ones are placed again",
+                    locationVersion, locationsGenerated);
+        m_locationsPending = true;
+    }
 
     auto count = pkg.read<std::int32_t>();
     for (int i = 0; i < count; i++) {
@@ -1041,9 +1043,13 @@ ZoneManager::Feature const *ZoneManager::GetFeature(std::string_view name)
 // call from within ZNet.init or earlier...
 void ZoneManager::PostGeoInit()
 {
-    // Will be empty if world failed to load
-    if (!m_generatedFeatures.empty())
+    // a loaded world has its locations; vanilla GenerateLocationsIfNeeded finishes them if the save says so
+    if (!m_generatedFeatures.empty()) {
+        if (m_locationsPending)
+            RegenerateLocations();
+        m_locationsPending = false;
         return;
+    }
 
     // Crucially important Location
     // So check that it exists period

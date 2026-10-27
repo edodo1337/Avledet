@@ -37,6 +37,8 @@ World::World(DataReader reader)
     auto version = reader.read<std::int32_t>();
     if (version < 40)
         throw std::runtime_error("world meta predates the chunked save: " + std::to_string(version));
+    if (version > VConstants::WORLD)
+        throw std::runtime_error("world meta of a newer game: " + std::to_string(version));
 
     m_name            = reader.read<std::string>();
     m_seedName        = reader.read<std::string>();
@@ -105,6 +107,9 @@ std::optional<std::uint32_t> WorldManager::FindSave(std::filesystem::path const 
                 save = n;
         }
     }
+    // an unreadable dir is not "no save": a new world would sweep the chunks of the real one
+    if (err && err != std::errc::no_such_file_or_directory)
+        throw std::runtime_error("cannot read " + dir.string() + ": " + err.message());
     return save;
 }
 
@@ -121,9 +126,13 @@ void WorldManager::Load(std::filesystem::path const &dir, std::uint32_t save)
     auto start = std::chrono::steady_clock::now();
     m_world    = std::make_unique<World>(read("fwl2"));
 
-    auto db = read("db2");
-    if (db.read<std::int32_t>() < 40)
+    auto db      = read("db2");
+    auto version = db.read<std::int32_t>();
+    if (version < 40)
         throw std::runtime_error("world data predates the chunked save");
+    // Version.IsWorldVersionCompatible: a newer game wrote it, its layout is unknown here
+    if (version > VConstants::WORLD)
+        throw std::runtime_error("world data of a newer game: " + std::to_string(version));
     Avledet::instance().m_worldTime = db.read<double>();
     ZoneManager::instance().Load(db, m_world->m_startingGlobalKeys);
 #if AVL_IS_ON(AVL_RANDOM_EVENTS)
@@ -189,7 +198,13 @@ void WorldManager::Save(std::filesystem::path const &dir)
     // ZNet.ConsiderAutoBackup: not before 20 minutes of the session
     job.m_backup           = Avledet::instance().Elapsed() >= std::chrono::seconds(1200);
     m_saveThread           = std::thread([this, job = std::move(job)] {
-        m_saveOk   = WriteSave(job);
+        // an exception here must not end the server (std::terminate): the previous save stays
+        try {
+            m_saveOk = WriteSave(job);
+        } catch (std::exception const &e) {
+            LOG_ERROR(AVL_LOGGER, "World save {} failed: {}", job.m_save, e.what());
+            m_saveOk = false;
+        }
         m_saveDone = true;
     });
 }
@@ -320,6 +335,12 @@ void WorldManager::PostZoneInit()
     if (auto save = FindSave(dir)) {
         // a broken save must not be overwritten by a fresh world
         Load(dir, *save);
+    } else if (auto meta = VUtils::Resource::ReadFile<avledet::util::Bytes>(dir / "_main.0.fwl2")) {
+        // a new vanilla world is only its meta (needsDB false): its seed, uid and world modifiers
+        m_world = std::make_unique<World>(DataReader(std::move(*meta)));
+        for (auto &&key : m_world->m_startingGlobalKeys)
+            ZoneManager::instance().GlobalKeyAdd(key, false);
+        LOG_INFO(AVL_LOGGER, "New vanilla world from {}", (dir / "_main.0.fwl2").string());
     } else {
         LOG_INFO(AVL_LOGGER, "No save in {}, creating a new world", dir.string());
         m_world = std::make_unique<World>(AVL_CONFIG.m_world_name, AVL_CONFIG.m_world_seed);
