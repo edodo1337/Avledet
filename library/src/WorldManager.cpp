@@ -145,7 +145,12 @@ void WorldManager::Load(std::filesystem::path const &dir, std::uint32_t save)
 #endif
     // vanilla reads this section only when 4 bytes are left
     if (db.size() - db.get_pos() >= 4)
-        PersistentEventManager::instance().Load(db.read<avledet::util::Bytes>());
+        // a broken section: vanilla logs "Failed to load persistent event data" and goes on
+        try {
+            PersistentEventManager::instance().Load(db.read<avledet::util::Bytes>());
+        } catch (std::exception const &e) {
+            LOG_ERROR(AVL_LOGGER, "Failed to load persistent event data: {}", e.what());
+        }
 
     ZdoManager::instance().LoadChunks(dir, save);
 

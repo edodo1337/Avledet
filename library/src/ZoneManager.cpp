@@ -17,6 +17,7 @@
 #include "UnityTransform.h"
 #include "ZDOManager.h"
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <numeric>
 #include <vector>
@@ -1534,11 +1535,22 @@ float ZoneManager::ScalarKey(std::string_view key) const
     auto it = m_globalKeysValues.find(std::string(key));
     if (it == m_globalKeysValues.end())
         return 1;
-    try {
-        return std::stof(it->second) / 100.f;
-    } catch (...) {
+    // float.TryParse(NumberStyles.Any): surrounding spaces and thousands commas pass, anything else
+    // left over fails and the default 1 stays
+    std::string text;
+    for (char c : it->second)
+        if (c != ',')
+            text += c;
+    auto first = text.find_first_not_of(" \t");
+    auto last  = text.find_last_not_of(" \t");
+    if (first == std::string::npos)
         return 1;
-    }
+    float value;
+    auto end = text.data() + last + 1;
+    auto [ptr, ec] = std::from_chars(text.data() + first, end, value);
+    if (ec != std::errc {} || ptr != end)
+        return 1;
+    return value / 100.f;
 }
 
 // Game.ScaleDrops(ItemData, randomMin, randomMax): Random.Range, scaled by the ResourceRate modifier
