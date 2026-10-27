@@ -1,6 +1,10 @@
 #pragma once
 
+#include <array>
+#include <filesystem>
 #include <functional>
+#include <optional>
+#include <vector>
 #include <future>
 #include <thread>
 
@@ -11,6 +15,7 @@
 
 class WorldManager;
 
+// .fwl2 meta of a vanilla 1.0 world
 class World
 {
     friend class WorldManager;
@@ -21,69 +26,41 @@ class World
     avledet::util::Hash m_seed;
     std::int64_t m_uid;
     std::int32_t m_worldGenVersion;
-    avledet::util::Set<std::string, ankerl::unordered_dense::string_hash, std::equal_to<>>
-            m_startingGlobalKeys;
+    // server options (world modifiers), applied as global keys
+    std::vector<std::string> m_startingGlobalKeys;
+    // ZNet.CrossNetworkUserInfo: platform user id, display name, server display name, playfab id
+    std::vector<std::array<std::string, 4>> m_playerHistory;
 
   public:
     World(std::string name, std::string seedName);
-    World(DataReader reader);
+    explicit World(DataReader reader);
 
-  public:
-    avledet::util::Bytes SaveMeta();
-    //avledet::util::Bytes SaveDB();
-
-    void WriteFileMeta(std::filesystem::path const &root);
-    void WriteFileDB(std::filesystem::path const &root);
-    void LoadFileDB(std::filesystem::path const &root);
-    void CopyCompressDB(std::filesystem::path const &root);
-    void WriteFiles(std::filesystem::path const &root);
-
-    void WriteFileMeta();
-    void WriteFileDB();
-    void LoadFileDB();
-    void WriteFiles();
+    avledet::util::Bytes SaveMeta() const;
 };
 
+// Vanilla 1.0 chunked world save in <savedir>/worlds_local/<world>/, so the same folder works
+// for this server and the vanilla one:
+//  _main.<N>.fwl2 meta, .db2 time/zones/events, .chunks index, .ok marker, YY_XX__S_V.chunk ZDOs
 class WorldManager : public avledet::util::IManager<WorldManager>
 {
   private:
     std::unique_ptr<World> m_world;
-    //std::jthread m_saveThread;
+    std::uint32_t m_saveNumber = 0;
+    // PersistentEventSystem data, passed through
+    avledet::util::Bytes m_persistentEvents;
+
+    // newest save number with an .ok marker
+    static std::optional<std::uint32_t> FindSave(std::filesystem::path const &dir);
+    void Load(std::filesystem::path const &dir, std::uint32_t save);
 
   public:
     World *GetWorld();
 
-    // Get root path of worlds
-    //  threadsafe
-    std::filesystem::path GetWorldsPath() const;
-    // Get meta path of world
-    //  threadsafe
-    //std::filesystem::path GetWorldMetaPath(const std::string& name) const;
-    // Get db path of world
-    //  threadsafe
-    //std::filesystem::path GetWorldDBPath(const std::string& name) const;
+    std::filesystem::path GetWorldDir() const;
 
-    bool LoadWorldMeta(std::filesystem::path const &root);
-
-    std::unique_ptr<World> RetrieveWorld(std::string_view name, std::string_view fallbackSeedName) const;
-
-    avledet::util::Bytes SaveWorldDB() const;
-    //void LoadFileWorldDB(const std::filesystem::path& path) const;
-
-    // Create a copy of a world by name
-    //  threadsafe
-    //void BackupFileWorldDB() const;
-
-    // Write the db of the current world to disk
-    //  The world is only saved
-    //  Threadsafe
-    //void WriteFileWorldDB(const std::filesystem::path& path, bool sync);
-
-    // Write the db of the current world to disk
-    //  This is the go-to method to save the world to disk
-    //  The world is backed up then saved
-    //  Threadsafe
-    //void WriteFileWorldDB(bool sync);
+    // writes save N+1, then deletes save N and the chunk files it no longer lists
+    void Save(std::filesystem::path const &dir);
+    void Save();
 
     void PostZoneInit();
 

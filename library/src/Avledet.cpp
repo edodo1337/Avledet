@@ -113,7 +113,7 @@ void Avledet::LoadFiles(bool reloading)
 void Avledet::SaveFiles()
 {
     {
-        WorldManager::instance().GetWorld()->WriteFiles();
+        WorldManager::instance().Save();
     }
 
     {
@@ -557,7 +557,7 @@ void Avledet::PeriodUpdate()
 
         if (VUtils::run_periodic_later<struct periodic_save>(AVL_CONFIG.m_world_save_interval,
                                                              AVL_CONFIG.m_world_save_interval + 30s)) {
-            WorldManager::instance().GetWorld()->WriteFiles();
+            WorldManager::instance().Save();
         }
     }
 }

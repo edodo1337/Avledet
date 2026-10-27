@@ -535,6 +535,12 @@ class ZDO
     //  Otherwise write according to the file save format
     void pack(DataWriter &writer, bool network) const;
 
+    // Vanilla 1.0 chunked save (ZDO.Save/Load, world version >= 40): small position and
+    // rotation, the connection as a type and a pair hash, session-only keys dropped
+    void save(DataWriter &writer, ZDOConnectorData const *connection) const;
+    // false for a prefab unknown here, the data is read anyway
+    bool load(DataReader &reader);
+
     // Get a member by hash
     //  Returns null if absent
     //  Throws on type mismatch

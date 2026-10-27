@@ -16,6 +16,7 @@
 #include "VUtilsResource.h"
 #include "ZDOManager.h"
 #include <algorithm>
+#include <cctype>
 #include <numeric>
 #include <vector>
 #include "ZoneManager.h"
@@ -400,124 +401,121 @@ void ZoneManager::SendLocationIcons(Peer::Ptr peer)
 #endif
 }
 
-// public
-void ZoneManager::Save(DataWriter &pkg)
+// ZoneSystem.GetKeyValue below GlobalKeys.NonServerOption: server options, kept in the .fwl2 instead
+static bool IsServerOption(std::string_view key)
 {
+    static std::string_view const options[] = {
+            "playerdamage", "enemydamage", "worldlevel", "eventrate", "resourcerate", "staminarate",
+            "adrenalinerate", "eitrrate", "durabilityrate", "foodrate", "movestaminarate", "staminaregenrate",
+            "skillgainrate", "skillreductionrate", "enemyspeedsize", "enemyleveluprate", "carryweightrate",
+            "playerevents", "fire", "deathkeepequip", "deathdeleteitems", "deathdeleteunequipped",
+            "deathskillsreset", "deathkeepinventory", "nobuildcost", "nocraftcost", "allpiecesunlocked",
+            "noworkbench", "allrecipesunlocked", "worldlevellockedtools", "passivemobs", "nomap", "noportals",
+            "nobossportals", "dungeonbuild", "teleportall", "nopseudodrops", "nobuildingfall", "noheavysnow",
+            "allheavysnow", "preset"};
+    auto name = key.substr(0, key.find(' '));
+    for (auto option : options) {
+        if (std::ranges::equal(name, option, [](char a, char b) { return std::tolower(a) == std::tolower(b); }))
+            return true;
+    }
+    return false;
+}
+
+// public
+// ZoneSystem.Save of the .db2: one gzipped package
+void ZoneManager::Save(DataWriter &out)
+{
+    DataWriter pkg;
 #if AVL_IS_ON(AVL_ZONE_GENERATION)
     pkg.write((std::int32_t) m_generatedZones.size());
-    for (auto &&zone : m_generatedZones) {
-        pkg.write((std::int32_t) zone.x);
-        pkg.write((std::int32_t) zone.y);
-    }
+    for (auto &&zone : m_generatedZones)
+        pkg.write(zone);
 #else
-    LOG_WARNING(AVL_LOGGER, "Saving while AVL_ZONE_GENERATION:0 is not fully portable");
-
-    pkg.write<std::int32_t>(0);// 0 count
+    pkg.write<std::int32_t>(0);
 #endif
-    pkg.write((std::int32_t) 0);// PGW
     pkg.write(VConstants::LOCATION);
-    pkg.write(m_globalKeys);
-    pkg.write(true);
+
+    std::vector<std::string_view> keys;
+    for (auto &&key : m_globalKeys) {
+        if (!IsServerOption(key))
+            keys.push_back(key);
+    }
+    pkg.write((std::int32_t) keys.size());
+    for (auto key : keys)
+        pkg.write(key);
+
+    pkg.write(true);// locations generated
     pkg.write((std::int32_t) m_generatedFeatures.size());
     for (auto &&pair : m_generatedFeatures) {
 #if AVL_IS_ON(AVL_ZONE_GENERATION)
-        auto &&inst     = pair.second;
-        auto &&location = inst->m_feature.get();
-
-        pkg.write(std::string_view(location.m_name));
+        auto &&inst = pair.second;
+        pkg.write(avledet::util::get_stable_hash(inst->m_feature.get().m_name));
         pkg.write(inst->m_pos);
         pkg.write(m_generatedZones.contains(WorldToZonePos(inst->m_pos)));
 #else
-        static_assert(
-                std::is_same_v<Vector3f,
-                               decltype(decltype(std::remove_cvref_t<decltype(pair)>::second)::second)>);
-
-        pkg.write(m_features[pair.second.first]);
+        pkg.write(avledet::util::get_stable_hash(m_features[pair.second.first]));
         pkg.write(pair.second.second);
         pkg.write(true);
 #endif
     }
+
+    auto buf        = pkg.get_buf();
+    auto compressed = Deflater::Gz().Compress(buf.data(), (std::uint32_t) buf.size());
+    if (!compressed)
+        throw std::runtime_error("zone data compression failed");
+    out.write(*compressed);
 }
 
 // public
-void ZoneManager::Load(DataReader &reader, std::int32_t version)
+void ZoneManager::Load(DataReader &in, std::vector<std::string> const &startingKeys)
 {
-    {
-        auto count = reader.read<std::uint32_t>();
-        for (decltype(count) i = 0; i < count; i++) {
-            auto x = reader.read<std::int32_t>();
-            auto y = reader.read<std::int32_t>();
+    for (auto &&key : startingKeys)
+        m_globalKeys.insert(key);
+
+    auto packed = in.read<avledet::util::Bytes>();
+    auto bytes  = Inflater::Gz().Decompress(packed.data(), (std::uint32_t) packed.size());
+    if (!bytes)
+        throw std::runtime_error("zone data is not gzip");
+    DataReader pkg(std::move(*bytes));
+
+    auto zones = pkg.read<std::int32_t>();
+    for (int i = 0; i < zones; i++) {
+        auto zone = pkg.read<ZoneID>();
 #if AVL_IS_ON(AVL_ZONE_GENERATION)
-            m_generatedZones.insert(ZoneID(static_cast<std::int16_t>(x), std::int16_t(y)));
-#endif// AVL_ZONE_GENERATION
-        }
+        m_generatedZones.insert(zone);
+#endif
     }
+    auto locationVersion = pkg.read<std::int32_t>();
+    auto keys            = pkg.read<std::int32_t>();
+    for (int i = 0; i < keys; i++)
+        m_globalKeys.insert(pkg.read<std::string>());
+    bool locationsGenerated = pkg.read<bool>();
+    if (!locationsGenerated || locationVersion != VConstants::LOCATION)
+        LOG_WARNING(AVL_LOGGER, "Locations of version {} (generated: {}), not regenerated here", locationVersion,
+                    locationsGenerated);
 
-#if AVL_IS_ON(AVL_LEGACY_WORLD_LOADING)
-    if (version >= 13)
-#endif                              // AVL_LEGACY_WORLD_LOADING
-    {
-        reader.read<std::int32_t>();// PGW
-        auto const locationVersion = (version >= 21) ? reader.read<std::int32_t>() : 0;// 26
-
-#if AVL_IS_ON(AVL_LEGACY_WORLD_LOADING)
-        if (version >= 14)
-#endif// AVL_LEGACY_WORLD_LOADING
-        {
-            m_globalKeys = reader.read<decltype(m_globalKeys)>();
-
-#if AVL_IS_ON(AVL_LEGACY_WORLD_LOADING)
-            if (version >= 18)
-#endif// AVL_LEGACY_WORLD_LOADING
-            {
-#if AVL_IS_ON(AVL_LEGACY_WORLD_LOADING)
-                if (version >= 20)
-#endif                                  // AVL_LEGACY_WORLD_LOADING
-                {
-                    reader.read<bool>();// locationsGenerated
-                }
-
-                auto count = reader.read<std::int32_t>();
-                for (decltype(count) i = 0; i < count; i++) {
-                    auto text = reader.read<std::string_view>();
-                    auto pos  = reader.read<Vector3f>();
-
-#if AVL_IS_ON(AVL_LEGACY_WORLD_LOADING)
-                    bool generated = (version >= 19) ? reader.read<bool>() : false;
-#else // !AVL_LEGACY_WORLD_LOADING
-                    bool generated = reader.read<bool>();
-#endif// AVL_LEGACY_WORLD_LOADING
-
+    auto count = pkg.read<std::int32_t>();
+    for (int i = 0; i < count; i++) {
+        auto hash = pkg.read<avledet::util::Hash>();
+        auto pos  = pkg.read<Vector3f>();
+        pkg.read<bool>();// placed: the zone is generated
 #if AVL_IS_ON(AVL_ZONE_GENERATION)
-                    auto &&location = GetFeature(text);
-                    if (location) {
-                        m_generatedFeatures[WorldToZonePos(pos)]
-                                = std::make_unique<Feature::Instance>(*location, pos);
-                    } else {
-                        LOG_ERROR(AVL_LOGGER, "Unknown feature '{}'", text);
-                    }
-#else // !AVL_ZONE_GENERATION
-                    static_assert(std::numeric_limits<std::uint8_t>::max() > m_features.size());
-                    for (std::uint8_t i = 0; i < m_features.size(); i++) {
-                        if (text == std::string_view(m_features[i])) {
-                            // register
-                            m_generatedFeatures[WorldToZonePos(pos)]
-                                    = std::pair<std::uint8_t, Vector3f>(i, pos);
-                            break;
-                        }
-                    }
-#endif// AVL_ZONE_GENERATION
-                }
-
-                LOG_NOTICE(AVL_LOGGER, "Loaded {}/{} feature instances ", m_generatedFeatures.size(), count);
-
-                if (locationVersion != VConstants::LOCATION) {
-                    // regenerate features?
-                    //m_generatedFeatures.clear();
-                }
+        auto location = std::ranges::find_if(
+                m_features, [hash](auto &&f) { return avledet::util::get_stable_hash(f->m_name) == hash; });
+        if (location != m_features.end())
+            m_generatedFeatures[WorldToZonePos(pos)] = std::make_unique<Feature::Instance>(**location, pos);
+        else
+            LOG_ERROR(AVL_LOGGER, "Unknown location {}", hash);
+#else
+        for (std::uint8_t f = 0; f < m_features.size(); f++) {
+            if (avledet::util::get_stable_hash(m_features[f]) == hash) {
+                m_generatedFeatures[WorldToZonePos(pos)] = std::pair<std::uint8_t, Vector3f>(f, pos);
+                break;
             }
         }
+#endif
     }
+    LOG_NOTICE(AVL_LOGGER, "Loaded {} zones, {}/{} locations", zones, m_generatedFeatures.size(), count);
 }
 
 // private

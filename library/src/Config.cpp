@@ -189,6 +189,7 @@ void ConfigManager::load()
             c(
                     m_world_seed, world, "seed", VUtils::Random::GenerateAlphaNum(10),
                     [](std::string const &val) { return val.empty(); });
+            c(m_world_savedir, world, "savedir", ".", nullptr);
             c(m_world_pregenerate, experimental, "world-pregenerate", false, nullptr);
             r(m_world_save_interval, world, "save-interval", 30min,
               [](std::chrono::seconds val) { return val < 0s; });

@@ -212,7 +212,7 @@ void DiscordManager::init()
                     Avledet::instance().LoadFiles(true);
                     event.reply("All files were reloaded");
                 } else if (label == "avlsave") {
-                    WorldManager::instance().GetWorld()->WriteFiles();
+                    WorldManager::instance().Save();
                     event.reply("Saved the world");
                 } else if (label == "avlstop") {
                     event.reply("Stopping the server!");

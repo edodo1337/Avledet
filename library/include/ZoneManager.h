@@ -372,7 +372,8 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
 #endif
 
     void Save(DataWriter &pkg);
-    void Load(DataReader &reader, std::int32_t version);
+    // startingKeys: server options of the .fwl2, active as global keys
+    void Load(DataReader &reader, std::vector<std::string> const &startingKeys);
 
     bool has_global_key(std::string_view key) const
     {

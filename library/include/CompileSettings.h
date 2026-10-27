@@ -356,12 +356,12 @@ namespace VConstants {
     static constexpr std::uint32_t NETWORK = 41;
 
     // Used while loading world from file (ZNet/ZoneSystem/ZDOMan/RandEventSystem)
-    // 32: Hildir beta
-    static constexpr std::int32_t WORLD = 36;
+    // 42: 1.0 chunked save
+    static constexpr std::int32_t WORLD = 42;
 
     // Used in WorldGenerator terrain
     static constexpr std::int32_t WORLDGEN = 2;
 
     // Used in ZoneSystem Feature-Prefabs
-    static constexpr std::int32_t LOCATION = 31;
+    static constexpr std::int32_t LOCATION = 32;
 }// namespace VConstants

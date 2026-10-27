@@ -2,7 +2,10 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <filesystem>
+#include <format>
 #include <functional>
+#include <map>
 #include <quill/LogMacros.h>
 #include <stdexcept>
 
@@ -18,6 +21,7 @@
 #include "RouteManager.h"
 #include "ServerSettings.h"
 #include "VUtils.h"
+#include "VUtilsResource.h"
 #include "ZDO.h"
 #include "ZDOManager.h"
 #include "ZoneManager.h"
@@ -185,144 +189,204 @@ void ZdoManager::_InvalidateZDOZone(ZDO::reference zdo)
     }
 }
 
-void ZdoManager::Save(DataWriter &writer)
-{
-    //pkg.write(Avledet::instance().ID());
-    writer.write((std::int64_t) 0);
-    writer.write(m_nextUid);
-
+namespace {
+    // Game.m_portalPrefabs: saved apart, in ChunkPortal
+    bool IsPortal(avledet::util::Hash prefab)
     {
-        // Write zdos (persistent)
-        auto const start = writer.get_pos();
-
-        std::int32_t count = 0;
-        writer.write(count);
-
-        for (auto &&zdo : m_objectsByID) {
-            if (zdo->is_persistent()) {
-                zdo->pack(writer, false);
-                count++;
-            }
-        }
-
-        auto const end = writer.get_pos();
-        writer.set_pos(start);
-        writer.write(count);
-        writer.set_pos(end);
+        static avledet::util::Hash const portals[] = {avledet::util::get_stable_hash("portal_wood"),
+                                                      avledet::util::get_stable_hash("portal_stone"),
+                                                      avledet::util::get_stable_hash("portal")};
+        return std::ranges::find(portals, prefab) != std::end(portals);
     }
+
+    // ZoneSystem.ChunkIndex(1, 0)
+    constexpr std::uint16_t CHUNK_PORTAL = 1;
+
+    // ZoneSystem.GetSectorIndex then the 8x8 zone base chunk; outside the 512x512 sectors is sector 0
+    std::uint16_t ChunkOf(Vector3f pos)
+    {
+        auto x = (std::uint32_t) ((int) std::floor((pos.x + 32.f) / 64.f) + 256);
+        auto y = (std::uint32_t) ((int) std::floor((pos.z + 32.f) / 64.f) + 256);
+        if (x >= 512 || y >= 512)
+            x = y = 0;
+        return (std::uint16_t) ((x >> 3) | ((y >> 3) << 8));
+    }
+
+    // ChunkSaveMapping.GetChunkFilename
+    std::string ChunkFile(std::uint16_t chunk, std::uint8_t size, std::uint32_t version)
+    {
+        return std::format("{:02x}_{:02x}__{}_{}.chunk", chunk >> 8, chunk & 0xFF, size, version);
+    }
+
+    ZDOConnector::Type operator|(ZDOConnector::Type a, ZDOConnector::Type b)
+    {
+        return ZDOConnector::Type(std::to_underlying(a) | std::to_underlying(b));
+    }
+}// namespace
+
+std::vector<std::string> ZdoManager::SaveChunks(std::filesystem::path const &dir, std::uint32_t save)
+{
+    // ZDOExtraData.RegenerateConnectionHashData: one int per linked pair, the target gets type|Target
+    avledet::util::Map<ZDOID, ZDOConnectorData> connections;
+    avledet::util::Hash nextHash = 1;
+    for (auto &&[id, conn] : ZDO::PAIRED_CONNECTORS) {
+        auto type = conn.m_type;
+        if (type == ZDOConnector::Type::None || !find_zdo(id))
+            continue;
+        if (type != ZDOConnector::Type::Spawned && !find_zdo(conn.m_target))
+            continue;
+        auto hash       = nextHash++;
+        connections[id] = ZDOConnectorData(type, hash);
+        if (conn.m_target)
+            connections[conn.m_target] = ZDOConnectorData(type | ZDOConnector::Type::Target, hash);
+    }
+
+    std::map<std::uint16_t, std::vector<ZDO const *>> chunks;
+    for (auto &&zdo : m_objectsByID) {
+        if (zdo->is_persistent())
+            chunks[IsPortal(zdo->get_prefab_hash()) ? CHUNK_PORTAL : ChunkOf(zdo->get_position())].push_back(&*zdo);
+    }
+
+    std::vector<std::string> files;
+    DataWriter index;
+    index.write((std::int16_t) VConstants::WORLD);
+    std::int32_t total = 0;
+    for (auto &&[chunk, zdos] : chunks)
+        total += (std::int32_t) zdos.size();
+    index.write(total);
+    index.write((std::int32_t) chunks.size());
+
+    for (auto &&[chunk, zdos] : chunks) {
+        DataWriter writer;
+        writer.write((std::int16_t) VConstants::WORLD);
+        writer.write((std::int32_t) zdos.size());
+        for (auto &&zdo : zdos) {
+            auto find = connections.find(zdo->get_id());
+            zdo->save(writer, find != connections.end() ? &find->second : nullptr);
+        }
+        files.push_back(ChunkFile(chunk, 0, save));
+        if (!VUtils::Resource::WriteFile(dir / files.back(), writer.get_buf()))
+            throw std::runtime_error("failed to write " + files.back());
+
+        index.write(chunk);
+        index.write((std::uint8_t) 0);
+        index.write(save);
+        index.write((std::int32_t) zdos.size());
+    }
+
+    if (!VUtils::Resource::WriteFile(dir / std::format("_main.{}.chunks", save), index.get_buf()))
+        throw std::runtime_error("failed to write the chunk index");
+    return files;
 }
 
-void ZdoManager::Load(DataReader &reader, int version)
+void ZdoManager::LoadChunks(std::filesystem::path const &dir, std::uint32_t save)
 {
-    reader.read<std::int64_t>(); // server id
-    reader.read<std::uint32_t>();// next uid
+    auto opt = VUtils::Resource::ReadFile<avledet::util::Bytes>(dir / std::format("_main.{}.chunks", save));
+    if (!opt)
+        throw std::runtime_error("chunk index missing");
+    DataReader index(std::move(*opt));
+    index.read<std::uint16_t>();
+    index.read<std::int32_t>();// total
+    auto count = index.read<std::int32_t>();
 
-    auto count = reader.read<std::uint32_t>();
-    for (decltype(count) i = 0; i < count; i++) {
-        auto &&insert
-                = _Instantiate(version < 31 ? reader.read<ZDOID>() : ZDOID(0, ZdoManager::instance().m_nextUid++));
+    int unknown = 0;
+    for (int c = 0; c < count; c++) {
+        auto chunk   = index.read<std::uint16_t>();
+        auto size    = index.read<std::uint8_t>();
+        auto version = index.read<std::uint32_t>();
+        index.read<std::int32_t>();// zdos
 
-        //auto&& zdo = ZDO(*insert.first);
-        //auto&& zdo = insert
-        auto &&zdo = ZDO::make_reference(insert.first);
-
-#if AVL_IS_ON(AVL_LEGACY_WORLD_LOADING)
-        if (version < 31) {
-            auto zdoReader = DataReader(reader.read<std::vector<char>>());
-
-            zdo->Load31Pre(zdoReader, version);
-        } else
-#endif// AVL_LEGACY_WORLD_LOADING
-        {
-            zdo->unpack(reader, version);
+        auto file  = ChunkFile(chunk, size, version);
+        auto bytes = VUtils::Resource::ReadFile<avledet::util::Bytes>(dir / file);
+        if (!bytes)
+            throw std::runtime_error("missing " + file);
+        DataReader reader(std::move(*bytes));
+        // chunks of an older 1.0 version stay as they were, the format is the same since 40
+        if (reader.read<std::int16_t>() < 40)
+            throw std::runtime_error(file + " predates the chunked save");
+        auto num = reader.read<std::int32_t>();
+        for (int i = 0; i < num; i++) {
+            auto &&insert = _Instantiate(ZDOID(0, m_nextUid++));
+            auto &&zdo    = ZDO::make_reference(insert.first);
+            if (!zdo->load(reader)) {
+                // vanilla keeps them; this server cannot, it has no prefab to run them by
+                auto id = zdo->get_id();
+                ZDO::m_floats.erase(id);
+                ZDO::m_vec3.erase(id);
+                ZDO::m_quats.erase(id);
+                ZDO::m_ints.erase(id);
+                ZDO::m_longs.erase(id);
+                ZDO::m_strings.erase(id);
+                ZDO::m_byteArrays.erase(id);
+                ZDO::TYPED_CONNECTORS.erase(id);
+                m_objectsByID.erase(insert.first);
+                unknown++;
+                continue;
+            }
+            _AddZDOToZone(zdo);
+            m_objectsByPrefab[zdo->get_prefab_hash()].insert(zdo);
         }
+        if (reader.get_pos() != reader.size())
+            throw std::runtime_error(file + " has unread bytes");
+    }
+    if (unknown)
+        LOG_WARNING(AVL_LOGGER, "Dropped {} zdos with unknown prefabs", unknown);
 
-        _AddZDOToZone(zdo);
+    _ConnectAll();
+    LOG_NOTICE(AVL_LOGGER, "Loaded {} zdos from {} chunks", m_objectsByID.size(), count);
+}
 
-        //auto&& prefab = zdo.get_prefab();
-
-        m_objectsByPrefab[zdo->get_prefab_hash()].insert(zdo);
-
-        //assert(std::accumulate(m_objectsByPrefab.begin(), m_objectsByPrefab.end(), (std::size_t)0,
-        //	[](std::size_t value, const decltype(m_objectsByPrefab)::value_type& v) -> std::size_t {
-        //		return value + v.second.size();
-        //	}
-        //) == m_objectsByID.size());
-
-#if AVL_IS_ON(AVL_DUNGEON_REGENERATION)
-        if (prefab.AllFlagsPresent(Prefab::Flag::DUNGEON)) {
-            // Only add real sky dungeon
-            if (zdo->get_position().y > 4000)
-                DungeonManager::instance().m_dungeonInstances.push_back(zdo->get_id());
-        }
-#endif
-
-        //m_objectsByID[zdo->get_id()] = std::move(zdo);
+// ZDOMan.ConnectPortals, ConnectSpawners, ConnectSyncTransforms: saved pair hashes back to links
+void ZdoManager::_ConnectAll()
+{
+    using Type = ZDOConnector::Type;
+    // targets by type and hash
+    avledet::util::Map<std::uint64_t, ZDOID> targets;
+    auto key = [](Type type, avledet::util::Hash hash) {
+        return ((std::uint64_t) std::to_underlying(type) << 32) | (std::uint32_t) hash;
+    };
+    for (auto &&[id, data] : ZDO::TYPED_CONNECTORS) {
+        if (std::to_underlying(data.m_type) & std::to_underlying(Type::Target))
+            targets[key(data.m_type, data.m_hash)] = id;
     }
 
-#if AVL_IS_ON(AVL_LEGACY_WORLD_LOADING)
-    if (version < 31) {
-        auto deadCount = reader.read<std::int32_t>();
-        for (decltype(deadCount) j = 0; j < deadCount; j++) {
-            reader.read<std::int64_t>();
-            reader.read<std::uint32_t>();
-            reader.read<std::int64_t>();
-        }
-
-        // Owners, Terrains, and Seeds have already been converted
-
-        // convert portals
-        for (auto &&zdo : GetZDOs(avledet::util::hashes::Object::portal_wood)) {
-            auto &&string = zdo->get_string(avledet::util::hashes::ZDO::TeleportWorld::TAG);
-            ZDOID zdoid;
-            zdo->extract("target", zdoid);
-            if (zdoid && !string.empty()) {
-                auto &&zdo2 = find_zdo(zdoid);
-                if (zdo2) {
-                    auto &&string2 = zdo2->get_string(avledet::util::hashes::ZDO::TeleportWorld::TAG);
-                    ZDOID zdoid2;
-                    zdo2->extract("target", zdoid2);
-                    if (string == string2 && zdoid == zdo2->get_id() && zdoid2 == zdo->get_id()) {
-                        zdo->claim();
-                        zdo2->claim();
-                        zdo->set_connection(ZDOConnector::Type::Portal, zdo2->get_id());
-                        zdo2->set_connection(ZDOConnector::Type::Portal, zdo->get_id());
-                        //zdo.Apply();
-                    }
+    int portals = 0, spawners = 0, syncs = 0;
+    for (auto &&[id, data] : ZDO::TYPED_CONNECTORS) {
+        auto zdo = find_zdo(id);
+        if (!zdo)
+            continue;
+        auto find   = targets.find(key(data.m_type | Type::Target, data.m_hash));
+        auto target = find != targets.end() ? find->second : ZDOID::NONE;
+        switch (data.m_type) {
+            case Type::Portal:
+                if (auto other = target ? find_zdo(target) : ZDO::nullopt) {
+                    zdo->claim();
+                    other->claim();
+                    zdo->_set_connection(Type::Portal, target);
+                    other->_set_connection(Type::Portal, id);
+                    portals++;
                 }
-            }
-        }
-
-        // convert spawners
-        for (auto &&zdo : GetZDOs(Prefab::Flag::CREATURE_SPAWNER, Prefab::Flag::NONE)) {
-            zdo->claim();
-            ZDOID zdoid;
-            zdo->extract("spawn_id", zdoid);
-            auto &&zdo2 = find_zdo(zdoid);
-            zdo->set_connection(ZDOConnector::Type::Spawned, zdo2 ? zdo2->get_id() : ZDOID::NONE);
-            //zdo.Apply();
-        }
-
-        // convert sync transforms
-        for (auto &&zdo : GetZDOs(Prefab::Flag::SYNCED_TRANSFORM, Prefab::Flag::NONE)) {
-            zdo->claim();
-            ZDOID zdoid;
-            zdo->extract("parentID", zdoid);
-            auto &&zdo2 = find_zdo(zdoid);
-            if (zdo2) {
-                zdo->set_connection(ZDOConnector::Type::Spawned, zdo2->get_id());
-                //zdo.Apply();
-            } else {
-                //zdo.m_pack.Set<ZDO::FLAGS_PACK_INDEX>(
-                // zero out connector bit
-                //zdo.m_pack.Get<ZDO::FLAGS_PACK_INDEX>() & static_cast<std::uint32_t>(~ZDO::LocalFlag::Member_Connection)
-                //);
-            }
+                break;
+            case Type::Spawned:
+                // a spawner without its creature is 'done'
+                zdo->claim();
+                zdo->_set_connection(Type::Spawned, target);
+                if (target)
+                    targets.erase(find);
+                spawners++;
+                break;
+            case Type::SyncTransform:
+                if (target) {
+                    zdo->_set_connection(Type::SyncTransform, target);
+                    syncs++;
+                }
+                break;
+            default:
+                break;
         }
     }
-#endif// AVL_LEGACY_WORLD_LOADING
-
-    LOG_NOTICE(AVL_LOGGER, "Loaded {} zdos", m_objectsByID.size());
+    ZDO::TYPED_CONNECTORS.clear();
+    LOG_INFO(AVL_LOGGER, "Connected {} portals, {} spawners, {} sync transforms", portals, spawners, syncs);
 }
 
 [[nodiscard]] std::pair<ZDO::smart_set::iterator, bool> ZdoManager::_Instantiate(ZDOID zdoid) noexcept

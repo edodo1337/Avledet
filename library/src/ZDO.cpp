@@ -1,4 +1,6 @@
+#include <bit>
 #include <functional>
+#include <optional>
 //#include <ranges>
 #include <stdexcept>
 #include <utility>
@@ -551,6 +553,187 @@ void ZDO::unpack(DataReader &reader, std::int32_t version)
         if (flags & (1 << NETWORK_ByteArray))
             this->_load_vars(reader, version, m_byteArrays);
     }
+}
+
+namespace {
+    // ZDOVars.s_sessionHashes: never saved to disk
+    auto const SESSION_KEYS = [] {
+        avledet::util::Set<avledet::util::Hash> keys;
+        for (auto name : {"CatchID_u", "CatchID_i", "alert", "animation_speed", "body_avel", "body_vel",
+                          "BodyVelocity", "haveTarget", "InUse", "landed", "LookTarget", "noise", "support",
+                          "tiltrot", "vel", "velRel"})
+            keys.insert(avledet::util::get_stable_hash(name));
+        return keys;
+    }();
+
+    // Utils.SmallPosition: integer x/z with y == +0 fit in two shorts, far ones get clamped to 20000
+    std::optional<Vector2s> SmallPosition(Vector3f v)
+    {
+        if (std::bit_cast<std::uint32_t>(v.y) != 0)
+            return std::nullopt;
+        // C# (short) cast of a float: through int32, then the low 16 bits
+        Vector2s s((std::int16_t) (std::int32_t) v.x, (std::int16_t) (std::int32_t) v.z);
+        bool xOk = (float) s.x == v.x;
+        bool zOk = (float) s.y == v.z;
+        if (xOk) {
+            if (zOk)
+                return s;
+            if (v.z < -20000.f || v.z > 20000.f) {
+                s.y = v.z < 0 ? -20000 : 20000;
+                return s;
+            }
+        }
+        if (zOk && (v.x < -20000.f || v.x > 20000.f)) {
+            s.x = v.x < 0 ? -20000 : 20000;
+            return s;
+        }
+        return std::nullopt;
+    }
+
+    // ZPackage.WriteSmallRotation: half degree steps
+    void WriteSmallRotation(DataWriter &writer, Vector3f v)
+    {
+        auto x = (std::uint32_t) (std::int64_t) (v.x * 2.f);
+        auto y = (std::uint32_t) (std::int64_t) (v.y * 2.f);
+        auto z = (std::uint32_t) (std::int64_t) (v.z * 2.f);
+        if ((x <= 1 || x >= 719) && (z <= 1 || z >= 719)) {
+            writer.write((std::uint16_t) (y | 0x8000));
+            return;
+        }
+        std::uint32_t packed = x | (y << 10) | (z << 20);
+        writer.write((std::uint16_t) (packed >> 16));
+        writer.write((std::uint16_t) packed);
+    }
+
+    Vector3f ReadSmallRotation(DataReader &reader)
+    {
+        std::uint32_t a = reader.read<std::uint16_t>();
+        if (a & 0x8000)
+            return Vector3f(0, (float) (a & 0x7FFF) * .5f, 0);
+        a = (a << 16) | reader.read<std::uint16_t>();
+        return Vector3f((float) (a & 0x3FF), (float) ((a >> 10) & 0x3FF), (float) ((a >> 20) & 0x3FF)) * .5f;
+    }
+
+    // Utils.CloseToZero
+    bool CloseToZero(Vector3f v)
+    {
+        return (int) std::abs(v.x * 2.f) < 1 && (int) std::abs(v.y * 2.f) < 1 && (int) std::abs(v.z * 2.f) < 1;
+    }
+}// namespace
+
+void ZDO::save(DataWriter &writer, ZDOConnectorData const *connection) const
+{
+    // ExtraDataFlags
+    enum : std::uint16_t
+    {
+        Connections   = 0x01,
+        Persistent    = 0x100,
+        Distant       = 0x200,
+        Rotation      = 0x1000,
+        SmallPos      = 0x2000,
+    };
+
+    bool hasRot = !CloseToZero(m_rotation);
+    auto small  = SmallPosition(m_pos);
+
+    std::uint16_t flags = 0;
+    if (connection && connection->m_type != ZDOConnector::Type::None)
+        flags |= Connections;
+    if (is_persistent())
+        flags |= Persistent;
+    if (is_distant())
+        flags |= Distant;
+    flags |= std::to_underlying(get_type()) << 10;
+    if (hasRot)
+        flags |= Rotation;
+    if (small)
+        flags |= SmallPos;
+
+    auto const flagPos = writer.get_pos();
+    writer.write(flags);
+    if (small)
+        writer.write(*small);
+    else
+        writer.write(m_pos);
+    writer.write(get_prefab_hash());
+    if (hasRot)
+        WriteSmallRotation(writer, m_rotation);
+    if (flags & Connections) {
+        writer.write(connection->m_type);
+        writer.write(connection->m_hash);
+    }
+
+    // typed lists in the network order, flag bits 1..7
+    int bit         = 1;
+    auto writeVars = [&]<typename T>(VarMap<T> const &) {
+        bit <<= 1;
+        auto &&tree = _find_var_tree<T>(m_id);
+        if (!tree)
+            return;
+        int count = 0;
+        for (auto &&pair : *tree)
+            count += !SESSION_KEYS.contains(pair.first);
+        if (!count)
+            return;
+        flags |= bit;
+        _write_num_items(writer, count);
+        for (auto &&[key, value] : *tree) {
+            if (!SESSION_KEYS.contains(key)) {
+                writer.write(key);
+                writer.write(value);
+            }
+        }
+    };
+    writeVars(m_floats);
+    writeVars(m_vec3);
+    writeVars(m_quats);
+    writeVars(m_ints);
+    writeVars(m_longs);
+    writeVars(m_strings);
+    writeVars(m_byteArrays);
+
+    auto const endPos = writer.get_pos();
+    writer.set_pos(flagPos);
+    writer.write(flags);
+    writer.set_pos(endPos);
+}
+
+bool ZDO::load(DataReader &reader)
+{
+    auto flags = reader.read<std::uint16_t>();
+    if (flags & 0x2000) {
+        auto small = reader.read<Vector2s>();
+        _set_position(Vector3f(small.x, 0, small.y));
+    } else {
+        _set_position(reader.read<Vector3f>());
+    }
+    auto prefab = reader.read<avledet::util::Hash>();
+    bool known  = PrefabManager::instance().find_prefab(prefab);
+    if (known)
+        _set_prefab_hash(prefab);
+    if (flags & 0x1000)
+        _set_rotation(ReadSmallRotation(reader));
+    if (flags & 0x01) {
+        auto &&connector = TYPED_CONNECTORS[m_id];
+        connector.m_type = reader.read<ZDOConnector::Type>();
+        connector.m_hash = reader.read<avledet::util::Hash>();
+    }
+    // version 0: no old-key conversions, varint counts as on disk since version 33
+    if (flags & 0x02)
+        _load_vars(reader, 0, m_floats);
+    if (flags & 0x04)
+        _load_vars(reader, 0, m_vec3);
+    if (flags & 0x08)
+        _load_vars(reader, 0, m_quats);
+    if (flags & 0x10)
+        _load_vars(reader, 0, m_ints);
+    if (flags & 0x20)
+        _load_vars(reader, 0, m_longs);
+    if (flags & 0x40)
+        _load_vars(reader, 0, m_strings);
+    if (flags & 0x80)
+        _load_vars(reader, 0, m_byteArrays);
+    return known;
 }
 
 // ZDO specific-methods

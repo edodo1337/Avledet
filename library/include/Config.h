@@ -88,6 +88,7 @@ public:
 
     std::string m_world_name {};
     std::string m_world_seed {};
+    std::string m_world_savedir {};// vanilla -savedir: worlds in <savedir>/worlds_local/<world>/
     bool m_world_pregenerate;
     std::chrono::seconds m_world_save_interval {};// set to 0 to disable
     bool m_world_gen_features {};

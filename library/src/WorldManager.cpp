@@ -1,4 +1,6 @@
+#include <format>
 #include <future>
+#include <regex>
 #include <quill/std/FilesystemPath.h>
 #include <string>
 
@@ -15,213 +17,71 @@
 #include "ZDOManager.h"
 #include "ZoneManager.h"
 
+// ZoneSystem.m_locationVersion and Version.World of 1.0.20
+static_assert(VConstants::WORLD == 42);
+
+// PersistentEventSystem with no events: Brotli of {"list":[]}
+static avledet::util::Bytes const NO_PERSISTENT_EVENTS
+        = {0x0b, 0x05, (char) 0x80, '{', '"', 'l', 'i', 's', 't', '"', ':', '[', ']', '}', 0x03};
+
 World::World(std::string name, std::string seedName)
 {
     m_name            = std::move(name);
     m_seedName        = std::move(seedName);
-    m_seed            = avledet::util::get_stable_hash(m_seedName);// seedName is moved-from here
+    m_seed            = avledet::util::get_stable_hash(m_seedName);
     m_uid             = VUtils::Random::GenerateUID();
     m_worldGenVersion = VConstants::WORLDGEN;
 }
 
 World::World(DataReader reader)
 {
-    reader = DataReader(reader.read<std::vector<char>>());
+    reader = DataReader(reader.read<avledet::util::Bytes>());
 
-    auto worldVersion = reader.read<std::int32_t>();
+    auto version = reader.read<std::int32_t>();
+    if (version < 40)
+        throw std::runtime_error("world meta predates the chunked save: " + std::to_string(version));
 
-    if (worldVersion != VConstants::WORLD) {
-        LOG_WARNING(AVL_LOGGER, "Loading unsupported world meta version: {}", worldVersion);
-    }
-
-    m_name     = reader.read<std::string>();
-    m_seedName = reader.read<std::string>();
-    //reader.read<avledet::util::Hash>();// seed
-    m_seed            = reader.read<avledet::util::Hash>();//avledet::util::get_stable_hash(m_seedName);
+    m_name            = reader.read<std::string>();
+    m_seedName        = reader.read<std::string>();
+    m_seed            = reader.read<avledet::util::Hash>();
     m_uid             = reader.read<std::int64_t>();
-    m_worldGenVersion = worldVersion >= 26 ? reader.read<std::int32_t>() : 0;
-    bool needsDB      = worldVersion >= 30 ? reader.read<bool>() : false;
-    if (worldVersion >= 32) {
-        m_startingGlobalKeys = reader.read<decltype(m_startingGlobalKeys)>();
-    }
-}
-
-avledet::util::Bytes World::SaveMeta()
-{
-    DataWriter writer;
-    {
-        avledet::util::WriterScopedEncap scoped(writer);
-
-        writer.write(VConstants::WORLD);
-        writer.write(m_name);
-        writer.write(m_seedName);
-        writer.write(avledet::util::get_stable_hash(m_seedName));
-        writer.write(m_uid);
-        writer.write(m_worldGenVersion);
-        writer.write(true);
-        writer.write(m_startingGlobalKeys);
-    }
-
-    return writer.release();
-}
-
-/*
-avledet::util::Bytes World::SaveDB() {
-	avledet::util::Bytes bytes;
-	DataWriter writer(bytes);
-
-	writer.write(VConstants::WORLD);
-	writer.write(Avledet::instance().GetWorldTime());
-
-	ZdoManager::instance().Save(writer);
-	ZoneManager::instance().Save(writer);
-	EventManager()->Save(writer);
-
-	return bytes;
-}*/
-
-
-void World::WriteFileMeta(std::filesystem::path const &root)
-{
-    std::filesystem::create_directories(root);
-
-    avledet::util::Bytes bytes = SaveMeta();
-
-    auto path(root / (m_name + ".fwl"));
-
-    // create fwl
-    if (VUtils::Resource::WriteFile(path, bytes)) {
-        LOG_INFO(AVL_LOGGER, "Wrote world meta to {}", path.string());
-    } else {
-        LOG_ERROR(AVL_LOGGER, "Failed to write world meta to {}", path.string());
-    }
-}
-
-void World::WriteFileDB(std::filesystem::path const &root)
-{
-    std::filesystem::create_directories(root);
-
-    auto startTime(std::chrono::steady_clock::now());
-    avledet::util::Bytes bytes = WorldManager::instance().SaveWorldDB();
-    auto finishTime            = (std::chrono::steady_clock::now());
-
-    auto path(root / (m_name + ".db"));
-
-    if (VUtils::Resource::WriteFile(path, bytes)) {
-        LOG_INFO(AVL_LOGGER, "World save {} took {}ms", path.string(),
-                 std::chrono::duration_cast<std::chrono::milliseconds>(finishTime - startTime).count());
-    } else {
-        LOG_WARNING(AVL_LOGGER, "Failed to save world to {}", path.string());
-    }
-}
-
-void World::LoadFileDB(std::filesystem::path const &root)
-{
-    auto now(std::chrono::steady_clock::now());
-
-    auto path(root / (m_name + ".db"));
-    if (auto opt = VUtils::Resource::ReadFile<avledet::util::Bytes>(path)) {
-        try {
-            DataReader reader(std::move(opt.value()));
-
-            auto worldVersion = reader.read<std::int32_t>();
-            if (worldVersion < VConstants::WORLD) {
-#if AVL_IS_ON(AVL_LEGACY_WORLD_LOADING)
-                LOG_WARNING(AVL_LOGGER, "Loading legacy world with version {}", worldVersion);
-#else // !AVL_LEGACY_WORLD_LOADING
-                LOG_ERROR(AVL_LOGGER, "Requires AVL_LEGACY_WORLD_COMPATIBILITY to load legacy worlds");
-                throw std::runtime_error("legacy world loading unsupported with current compile settings");
-#endif// AVL_LEGACY_WORLD_LOADING
-            } else if (worldVersion > VConstants::WORLD) {
-                LOG_WARNING(AVL_LOGGER, "Loading world with a newer version than we support {}",
-                            worldVersion);
-            } else {
-                LOG_NOTICE(AVL_LOGGER, "Loading world version {}", worldVersion);
-            }
-
-#if AVL_IS_ON(AVL_LEGACY_WORLD_LOADING)
-            if (worldVersion >= 4)
-#endif// AVL_LEGACY_WORLD_LOADING
-            {
-                Avledet::instance().m_worldTime = reader.read<double>();
-            }
-
-            ZdoManager::instance().Load(reader, worldVersion);
-
-#if AVL_IS_ON(AVL_LEGACY_WORLD_LOADING)
-            if (worldVersion >= 12)
-#endif// AVL_LEGACY_WORLD_LOADING
-            {
-                ZoneManager::instance().Load(reader, worldVersion);
-            }
-
-#if AVL_IS_ON(AVL_RANDOM_EVENTS)
-    #if AVL_IS_ON(AVL_LEGACY_WORLD_LOADING)
-            if (worldVersion >= 15)
-    #endif// AVL_LEGACY_WORLD_LOADING
-            {
-                RaidManager::instance().Load(reader, worldVersion);
-            }
-#endif// AVL_RANDOM_EVENTS
-            LOG_INFO(AVL_LOGGER, "World loading took {}s",
-                     std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - now)
-                             .count());
-        } catch (std::runtime_error const &e) {
-            LOG_ERROR(AVL_LOGGER, "Failed to load world: {}", e.what());
+    m_worldGenVersion = reader.read<std::int32_t>();
+    reader.read<bool>();// needsDB
+    auto keys = reader.read<std::int32_t>();
+    for (int i = 0; i < keys; i++)
+        m_startingGlobalKeys.push_back(reader.read<std::string>());
+    if (version >= 41) {
+        auto users = reader.read<std::int32_t>();
+        for (int i = 0; i < users; i++) {
+            auto &&user = m_playerHistory.emplace_back();
+            for (auto &&field : user)
+                field = reader.read<std::string>();
         }
     }
 }
 
-void World::CopyCompressDB(std::filesystem::path const &root)
+avledet::util::Bytes World::SaveMeta() const
 {
-    auto path = root / (m_name + ".db");
-
-    if (std::filesystem::exists(path)) {
-        if (auto oldSave = VUtils::Resource::ReadFile<avledet::util::Bytes>(path)) {
-            auto compressed = ZStdCompressor().Compress(*oldSave);
-            if (!compressed) {
-                LOG_ERROR(AVL_LOGGER, "Failed to compress world backup {}", path.string());
-                return;
-            }
-
-            auto now(std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-            auto backup = path.string() + "-" + now + ".zstd";
-            if (VUtils::Resource::WriteFile(backup, *compressed)) {
-                LOG_INFO(AVL_LOGGER, "Saved world backup as '{}'", backup);
-            } else {
-                LOG_ERROR(AVL_LOGGER, "Failed to save world backup to {}", backup);
-            }
-        } else {
-            LOG_ERROR(AVL_LOGGER, "Failed to load old world for backup");
-        }
+    DataWriter pkg;
+    pkg.write(VConstants::WORLD);
+    pkg.write(m_name);
+    pkg.write(m_seedName);
+    pkg.write(m_seed);
+    pkg.write(m_uid);
+    pkg.write(m_worldGenVersion);
+    pkg.write(true);// needsDB
+    pkg.write((std::int32_t) m_startingGlobalKeys.size());
+    for (auto &&key : m_startingGlobalKeys)
+        pkg.write(key);
+    pkg.write((std::int32_t) m_playerHistory.size());
+    for (auto &&user : m_playerHistory) {
+        for (auto &&field : user)
+            pkg.write(field);
     }
-}
 
-void World::WriteFiles(std::filesystem::path const &root)
-{
-    WriteFileMeta(root);
-    WriteFileDB(root);
-    CopyCompressDB(root);
-}
-
-void World::WriteFileMeta()
-{
-    WriteFileMeta(WorldManager::instance().GetWorldsPath());
-}
-
-void World::WriteFileDB()
-{
-    WriteFileDB(WorldManager::instance().GetWorldsPath());
-}
-
-void World::LoadFileDB()
-{
-    LoadFileDB(WorldManager::instance().GetWorldsPath());
-}
-
-void World::WriteFiles()
-{
-    WriteFiles(WorldManager::instance().GetWorldsPath());
+    DataWriter file;
+    file.write(pkg.get_buf());
+    return file.get_buf();
 }
 
 World *WorldManager::GetWorld()
@@ -229,173 +89,148 @@ World *WorldManager::GetWorld()
     return m_world.get();
 }
 
-std::filesystem::path WorldManager::GetWorldsPath() const
+std::filesystem::path WorldManager::GetWorldDir() const
 {
-    return "./worlds";
+    return std::filesystem::path(AVL_CONFIG.m_world_savedir) / "worlds_local" / AVL_CONFIG.m_world_name;
 }
 
-/*
-std::filesystem::path WorldManager::GetWorldMetaPath(const std::string& name) const {
-	return GetWorldsPath() / (name + ".fwl");
-}
-
-std::filesystem::path WorldManager::GetWorldDBPath(const std::string& name) const {
-	return GetWorldsPath() / (name + ".db");
-}*/
-
-
-bool WorldManager::LoadWorldMeta(std::filesystem::path const &root)
+std::optional<std::uint32_t> WorldManager::FindSave(std::filesystem::path const &dir)
 {
-    if (auto opt
-        = VUtils::Resource::ReadFile<avledet::util::Bytes>(root / (AVL_CONFIG.m_world_name + ".fwl"))) {
-        try {
-            this->m_world = std::make_unique<World>(DataReader(*opt));
-        } catch (std::runtime_error const &e) {
-            LOG_ERROR(AVL_LOGGER, "Failed to load world meta: {}", e.what());
+    std::optional<std::uint32_t> save;
+    std::error_code err;
+    static std::regex const ok(R"(_main\.(\d+)\.ok)");
+    for (auto &&entry : std::filesystem::directory_iterator(dir, err)) {
+        std::smatch match;
+        auto name = entry.path().filename().string();
+        if (std::regex_match(name, match, ok)) {
+            auto n = (std::uint32_t) std::stoul(match[1]);
+            if (!save || n > *save)
+                save = n;
         }
     }
-
-    return m_world.get();
+    return save;
 }
 
-std::unique_ptr<World> WorldManager::RetrieveWorld(std::string_view name,
-                                                    std::string_view fallbackSeedName) const
+void WorldManager::Load(std::filesystem::path const &dir, std::uint32_t save)
 {
-    // load world from file
+    auto read = [&](std::string const &ext) {
+        auto path = dir / std::format("_main.{}.{}", save, ext);
+        auto opt  = VUtils::Resource::ReadFile<avledet::util::Bytes>(path);
+        if (!opt)
+            throw std::runtime_error("missing " + path.string());
+        return DataReader(std::move(*opt));
+    };
 
-    LOG_NOTICE(AVL_LOGGER, "Locating world meta [{}]", name);
+    auto start = std::chrono::steady_clock::now();
+    m_world    = std::make_unique<World>(read("fwl2"));
 
-    std::unique_ptr<World> world;
-
-    if (auto opt
-        = VUtils::Resource::ReadFile<avledet::util::Bytes>(GetWorldsPath() / (std::string(name) + ".fwl"))) {
-        try {
-            world = std::make_unique<World>(DataReader(*opt));
-        } catch (std::runtime_error const &e) {
-            LOG_ERROR(AVL_LOGGER, "Failed to load world meta: {}", e.what());
-        }
-    }
-
-    if (!world) {
-        LOG_INFO(AVL_LOGGER, "World not found, creating new world meta");
-        world = std::make_unique<World>(std::string(name), std::string(fallbackSeedName));
-
-        try {
-            world->WriteFileMeta();
-        } catch (std::exception const &e) {
-            LOG_ERROR(AVL_LOGGER, "Failed to write world meta: {}", e.what());
-        }
-    }
-
-    LOG_NOTICE(AVL_LOGGER, "Loaded world meta with seed {} ({})", world->m_seedName, world->m_seed);
-
-    return world;
-}
-
-avledet::util::Bytes WorldManager::SaveWorldDB() const
-{
-    DataWriter writer;
-
-    writer.write(VConstants::WORLD);
-    writer.write(Avledet::instance().GetWorldTime());
-
-    ZdoManager::instance().Save(writer);
-    ZoneManager::instance().Save(writer);
-    // This omission only works because random events happen to be saved/loaded last
+    auto db = read("db2");
+    if (db.read<std::int32_t>() < 40)
+        throw std::runtime_error("world data predates the chunked save");
+    Avledet::instance().m_worldTime = db.read<double>();
+    ZoneManager::instance().Load(db, m_world->m_startingGlobalKeys);
 #if AVL_IS_ON(AVL_RANDOM_EVENTS)
-    RaidManager::instance().Save(writer);
+    RaidManager::instance().Load(db, VConstants::WORLD);
 #else
-    writer.write(0.f);
-    writer.write("");
-    writer.write(0.f);
-    writer.write(Vector3f::ZERO);
+    db.read<float>();
+    db.read<std::string_view>();
+    db.read<float>();
+    db.read<Vector3f>();
 #endif
+    // vanilla reads this section only when 4 bytes are left
+    if (db.size() - db.get_pos() >= 4)
+        m_persistentEvents = db.read<avledet::util::Bytes>();
 
-    return writer.get_buf();
+    ZdoManager::instance().LoadChunks(dir, save);
+
+    m_saveNumber = save;
+
+    LOG_NOTICE(AVL_LOGGER, "Loaded world '{}' save {} in {}ms", m_world->m_name, save,
+               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start)
+                       .count());
 }
 
-/*
-void WorldManager::WriteFileWorldDB(const std::filesystem::path& path, bool sync) const {
-	if (m_saveThread.joinable()) {
-		//LOG(WARNING) << "Save thread is still active, joining...";
-		m_saveThread.join();
-	}
+void WorldManager::Save(std::filesystem::path const &dir)
+{
+    auto start = std::chrono::steady_clock::now();
+    std::filesystem::create_directories(dir);
+    auto const save = m_saveNumber + 1;
+    auto file       = [&](std::uint32_t n, std::string_view ext) { return dir / std::format("_main.{}.{}", n, ext); };
+    auto write      = [&](std::filesystem::path const &path, avledet::util::Bytes const &bytes) {
+        if (!VUtils::Resource::WriteFile(path, bytes))
+            throw std::runtime_error("failed to write " + path.string());
+    };
 
-	//LOG(INFO) << "World saving";
+    // vanilla order: chunks and their index, .db2, .fwl2, then the .ok marker
+    auto chunks = ZdoManager::instance().SaveChunks(dir, save);
 
-	auto start(steady_clock::now());
-	avledet::util::Bytes bytes = SaveWorldDB();
-	auto now(steady_clock::now());
+    DataWriter db;
+    db.write(VConstants::WORLD);
+    db.write(Avledet::instance().GetWorldTime());
+    ZoneManager::instance().Save(db);
+#if AVL_IS_ON(AVL_RANDOM_EVENTS)
+    RaidManager::instance().Save(db);
+#else
+    db.write(0.f);
+    db.write("");
+    db.write(0.f);
+    db.write(Vector3f::ZERO);
+#endif
+    db.write(m_persistentEvents.empty() ? NO_PERSISTENT_EVENTS : m_persistentEvents);
+    write(file(save, "db2"), db.get_buf());
+    write(file(save, "fwl2"), m_world->SaveMeta());
 
-	//LOG(INFO) << "World serialize took " << duration_cast<milliseconds>(now - start);
+    DataWriter ok;
+    ok.write(VConstants::WORLD);
+    write(file(save, "ok"), ok.get_buf());
 
-	m_saveThread = std::jthread([path](avledet::util::Bytes bytes) {
-		try {
-			el::Helpers::setThreadName("save");
+    // the new save is complete: drop the previous one and chunk files nothing lists
+    std::error_code err;
+    for (auto ext : {"fwl2", "db2", "chunks", "ok"})
+        std::filesystem::remove(file(m_saveNumber, ext), err);
+    for (auto &&entry : std::filesystem::directory_iterator(dir, err)) {
+        auto name = entry.path().filename().string();
+        if (name.ends_with(".chunk") && std::ranges::find(chunks, name) == chunks.end())
+            std::filesystem::remove(entry.path(), err);
+    }
+    m_saveNumber = save;
 
-			auto start(steady_clock::now());
+    LOG_INFO(AVL_LOGGER, "World save {} ({} chunks) took {}ms", save, chunks.size(),
+             std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
+}
 
-			if (VUtils::Resource::WriteFile(path, bytes))
-				//LOG(INFO) << "World save to " << path.c_str() << " in " << duration_cast<milliseconds>(steady_clock::now() - start);
-			else
-				//LOG(WARNING) << "Failed to save world to " << path.c_str();
-		}
-		catch (const std::exception& e) {
-			//LOG(ERROR) << "Severe error while saving world: " << e.what();
-		}
-	}, std::move(bytes));
-
-	if (sync && m_saveThread.joinable())
-		m_saveThread.join();
-}*/
-
-/*
-void WorldManager::WriteFileWorldDB(bool sync) {
-	WriteFileWorldDB(WorldManager::instance().GetWorldDBPath(m_world->m_name), sync);
-}*/
-
-/*
-void WorldManager::WriteWorldFiles(const std::filesystem::path& root) {
-	m_world->WriteFileMeta(root);
-	m_world->WriteFileDB(root);
-}*/
-
+void WorldManager::Save()
+{
+    try {
+        Save(GetWorldDir());
+    } catch (std::exception const &e) {
+        LOG_ERROR(AVL_LOGGER, "World save failed: {}", e.what());
+    }
+}
 
 void WorldManager::PostZoneInit()
 {
     LOG_NOTICE(AVL_LOGGER, "Initializing WorldManager");
 
-    m_world = RetrieveWorld(AVL_CONFIG.m_world_name, AVL_CONFIG.m_world_seed);
-
-#ifdef AVL_OPTION_ENABLE_CAPTURE
-    if (AVL_CONFIG.packetMode == PacketMode::PLAYBACK) {
-        std::filesystem::path root = std::filesystem::path(AVL_CAPTURE_PATH) / m_world->m_name
-                                     / std::to_string(AVL_CONFIG.packetPlaybackSessionIndex);
-
-        if (LoadWorldMeta(root))
-            m_world->LoadFileDB(root);
-        else
-            LOG_FATAL(AVL_LOGGER, "Failed to load world for playback");
-    } else
-#endif//AVL_OPTION_ENABLE_CAPTURE
-    {
-        m_world->LoadFileDB();
+    auto dir = GetWorldDir();
+    if (auto save = FindSave(dir)) {
+        // a broken save must not be overwritten by a fresh world
+        Load(dir, *save);
+    } else {
+        LOG_INFO(AVL_LOGGER, "No save in {}, creating a new world", dir.string());
+        m_world = std::make_unique<World>(AVL_CONFIG.m_world_name, AVL_CONFIG.m_world_seed);
     }
+
+    LOG_NOTICE(AVL_LOGGER, "World '{}' seed {} ({})", m_world->m_name, m_world->m_seedName, m_world->m_seed);
 }
 
 void WorldManager::PostInit()
 {
 #ifdef AVL_OPTION_ENABLE_CAPTURE
     if (AVL_CONFIG.packetMode == PacketMode::CAPTURE) {
-        // then save world as a copy to captures
-        auto world(WorldManager::instance().GetWorld());
-        std::filesystem::path root = std::filesystem::path(AVL_CAPTURE_PATH) / world->m_name
-                                     / std::to_string(AVL_CONFIG.packetCaptureSessionIndex);
-
-        std::filesystem::create_directories(root);
-
-        // save world
-        world->WriteFiles(root);
+        // save world as a copy to captures
+        Save(std::filesystem::path(AVL_CAPTURE_PATH) / m_world->m_name
+             / std::to_string(AVL_CONFIG.packetCaptureSessionIndex));
     }
 #endif//AVL_OPTION_ENABLE_CAPTURE
 }

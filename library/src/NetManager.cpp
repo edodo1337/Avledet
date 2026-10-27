@@ -261,7 +261,7 @@ void NetManager::OnPeerConnect(Peer::Ptr peer)
 
         //WorldManager::instance().WriteFileWorldDB(true);
 
-        WorldManager::instance().GetWorld()->WriteFiles();
+        WorldManager::instance().Save();
 
         peer->ConsoleMessage("Saved the world");
     });

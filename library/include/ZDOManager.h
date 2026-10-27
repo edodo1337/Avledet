@@ -177,6 +177,9 @@ class ZdoManager : public avledet::util::IManager<ZdoManager>
     //[[nodiscard]] std::pair<ZDO_iterator, bool> _GetOrInstantiate(ZDOID id, Vector3f def);
 
     // Returns
+    // saved connection hashes back to ZDO links, after a load
+    void _ConnectAll();
+
     ZDO::optional _find_zdo(ZDOID const &v)
     {
         auto &&find = m_objectsByID.find(v);
@@ -204,11 +207,11 @@ class ZdoManager : public avledet::util::IManager<ZdoManager>
     void Init();
     void Update();
 
-    // Used when saving the world from disk
-    void Save(DataWriter &writer);
+    // Vanilla 1.0 chunked save: persistent ZDOs in <dir>/YY_XX__0_<save>.chunk files (8x8 zones each,
+    // portals in their own file) and the index _main.<save>.chunks. Returns the chunk file names.
+    std::vector<std::string> SaveChunks(std::filesystem::path const &dir, std::uint32_t save);
 
-    // Used when loading the world from disk
-    void Load(DataReader &reader, int version);
+    void LoadChunks(std::filesystem::path const &dir, std::uint32_t save);
 
     [[maybe_unused]] ZDO::reference Instantiate(Prefab::Reference prefab, Vector3f pos);
 
