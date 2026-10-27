@@ -191,7 +191,41 @@ bool ServerOptions::Run(std::string_view line)
     auto rest = args.size() >= 2 ? std::string(line.substr(args[0].size() + 1)) : std::string();
     auto &&zones = ZoneManager::instance();
 
-    if (name == "setkey") {
+    // Terminal: a cheat command without devcommands only prints a hint
+    static constexpr std::string_view CHEATS[] {"sleep", "skiptime", "resetkeys", "listkeys", "players", "confirmcheats"};
+    if (!m_cheat && std::ranges::find(CHEATS, name) != std::end(CHEATS)) {
+        LOG_INFO(AVL_LOGGER, "$achievements_confirm_cheat");
+        return true;
+    }
+
+    if (name == "devcommands") {
+        m_cheat = !m_cheat;
+        LOG_INFO(AVL_LOGGER, "Dev commands: {}", m_cheat);
+    } else if (name == "sleep") {
+        Avledet::instance().SkipToMorning();
+    } else if (name == "skiptime") {
+        // TryParameterFloat(1, 240f)
+        float seconds = 240;
+        if (args.size() >= 2) {
+            float parsed;
+            auto &&a = args[1];
+            if (std::from_chars(a.data(), a.data() + a.size(), parsed).ec == std::errc {})
+                seconds = parsed;
+        }
+        Avledet::instance().SkipTime(seconds);
+        LOG_INFO(AVL_LOGGER, "Skipping {:.0f}s , Day:{}", seconds,
+                 (int) (Avledet::instance().GetWorldTime() / Avledet::WORLD_TIME_LENGTH));
+    } else if (name == "resetkeys") {
+        zones.GlobalKeysReset();
+        LOG_INFO(AVL_LOGGER, "Global and player keys cleared");
+    } else if (name == "listkeys") {
+        LOG_INFO(AVL_LOGGER, "Keys: {}", zones.m_globalKeys.size());
+        for (auto &&key : zones.m_globalKeys)
+            LOG_INFO(AVL_LOGGER, "  {}", key);
+    } else if (name == "players" || name == "confirmcheats") {
+        // Game.SetForcePlayerDifficulty and a text: nothing a client gets from the dedicated server
+        LOG_INFO(AVL_LOGGER, "{}", line);
+    } else if (name == "setkey") {
         // the "not a world modifier key" check passes: the dedicated server counts as cheated
         if (args.size() >= 2)
             SetGlobalKey(rest);

@@ -4,10 +4,12 @@
 #include <string_view>
 #include <vector>
 
-// Remote admin console commands of the dedicated server (ZNet.RPC_RemoteCommand -> Terminal). Cheats are
-// off there (devcommands is local only), so only the non-cheat remote commands run: setkey, removekey,
-// resetworldkeys, setworldmodifier, setworldpreset. The world modifier ones go through ServerOptionsGUI,
-// whose slider/toggle state persists between commands; it is kept here (server_options.json).
+// Remote admin console commands of the dedicated server (ZNet.RPC_RemoteCommand -> Terminal.TryRunCommand):
+// setkey, removekey, resetworldkeys, setworldmodifier, setworldpreset, genloc; after an admin's devcommands
+// (one flag for the whole server, two admins flip it back) also the cheats sleep, skiptime, resetkeys,
+// listkeys, players, confirmcheats. Their console output stays in the server log, as in vanilla.
+// The world modifier ones go through ServerOptionsGUI, whose slider/toggle state persists between
+// commands; it is kept here (server_options.json).
 class ServerOptions
 {
     struct Slider
@@ -27,6 +29,7 @@ class ServerOptions
     std::vector<Toggle> m_toggles;
     std::vector<std::pair<std::string, std::vector<std::string>>> m_presets;
     std::string m_preset = "Default";
+    bool m_cheat         = false;// Terminal.m_cheat
 
     static void SetGlobalKey(std::string const &key);
     void SetValue(Slider &s, int value);

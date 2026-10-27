@@ -461,6 +461,16 @@ void ZoneManager::GlobalKeyAdd(std::string_view keyStr, bool saveServerOption)
         starting->push_back(lower);
 }
 
+void ZoneManager::GlobalKeysReset()
+{
+    m_globalKeys.clear();
+    m_globalKeysValues.clear();
+    if (auto &&world = WorldManager::instance().GetWorld())
+        for (auto &&key : world->m_startingGlobalKeys)
+            GlobalKeyAdd(key, false);
+    SendGlobalKeys();
+}
+
 bool ZoneManager::GlobalKeyRemove(std::string_view keyStr, bool saveServerOption)
 {
     std::string value;

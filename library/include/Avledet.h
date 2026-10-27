@@ -61,9 +61,12 @@ class Avledet : public avledet::util::IManager<Avledet>
     std::chrono::steady_clock::duration m_tickMax {}, m_tickSum {};
     std::uint64_t m_tickCount = 0;
     std::filesystem::file_time_type m_settingsLastTime {};
+    // EnvMan time skip (SkipToMorning): on top of the normal time, until the morning
+    bool m_timeSkip {};
+    double m_skipToTime {};
+    double m_timeSkipSpeed {};
 #if AVL_IS_ON(AVL_PLAYER_SLEEP)
     bool m_playerSleep {};
-    double m_playerSleepUntil {};
     double m_playerSleepEnd = -100;// world time the last sleep ended
 #endif
 
@@ -208,6 +211,12 @@ class Avledet : public avledet::util::IManager<Avledet>
 
     // Returns game server time
     //  World time remains unchanged as players are offline
+    // EnvMan.SkipToMorning: the time runs to the next morning in 12 s
+    void SkipToMorning();
+    bool IsTimeSkipping() const { return m_timeSkip; }
+    // skiptime: ZNet.SetNetTime(now + seconds)
+    void SkipTime(double seconds) { m_worldTime += seconds; }
+
     WorldTime GetWorldTime() const
     {
         return this->m_worldTime;

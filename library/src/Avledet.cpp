@@ -380,12 +380,17 @@ bool Avledet::update()
 
     // Update();
     // This is important to processing RPC remote invocations
-    if (!NetManager::instance().GetPeers().empty()) {
+    // ZNet.UpdateNetTime: the time runs while players are on
+    if (!NetManager::instance().GetPeers().empty())
         m_worldTime += delta() * m_worldTimeMultiplier;
-        // EnvMan.UpdateTimeSkip stops exactly at the morning
-        if (m_playerSleep && m_worldTime >= m_playerSleepUntil) {
-            m_worldTime           = m_playerSleepUntil;
-            m_worldTimeMultiplier = 1;
+    // EnvMan.UpdateTimeSkip adds on top and stops exactly at the morning. Its FixedUpdate takes one
+    // 0.02 s step per frame, and the vanilla dedicated server runs about 28.2 frames a second (measured
+    // with the bot, idle and generating): a sleep lasts some 20 s, not 12
+    if (m_timeSkip) {
+        m_worldTime += delta() * m_timeSkipSpeed * (0.02 * 28.2);
+        if (m_worldTime >= m_skipToTime) {
+            m_worldTime = m_skipToTime;
+            m_timeSkip  = false;
         }
     }
 
@@ -465,91 +470,87 @@ void Avledet::PeriodUpdate()
 
 
 #if AVL_IS_ON(AVL_PLAYER_SLEEP)
-    //if (AVL_CONFIG.playerSleep) {
-    if (m_playerSleep) {
-        if (m_worldTime >= m_playerSleepUntil) {
-            // Wake up players
-
-            if (AVL_CONFIG.playerSleepSolo) {
-                // only awake sleeping players
-                for (auto &&peer : NetManager::instance().GetPeers()) {
-                    auto &&zdo = peer->find_zdo();
-                    if (zdo && zdo->get_bool(avledet::util::hashes::ZDO::Player::IN_BED, false)) {
-                        RouteManager::instance().Invoke(peer->GetUserID(),
-                                               avledet::util::hashes::Routed::S2C_RequestStopSleep);
-                    }
-                }
-            } else {
-                // wake every player
-                RouteManager::instance().InvokeAll(avledet::util::hashes::Routed::S2C_RequestStopSleep);
-            }
-
-            m_playerSleep         = false;
-            m_worldTimeMultiplier = 1;
-            m_playerSleepEnd      = m_worldTime;
-            LOG_INFO(AVL_LOGGER, "Sleep ended, day {}", GetDay());
-
-            // Game.SleepStop: save if the last save is over a minute old
-            if (WorldManager::instance().SinceSave() > 60s)
-                WorldManager::instance().Save();
-        }
-    } else {
-        // Game.UpdateSleeping: EnvMan afternoon or night (day fraction >= 0.5 or <= 0.15), not within
-        // 10 s of the last sleep
-        auto timeOfDay = GetTimeOfDay(m_worldTime);
-        if ((timeOfDay >= 0.5 * WORLD_TIME_LENGTH || timeOfDay <= 0.15 * WORLD_TIME_LENGTH)
-            && m_worldTime - m_playerSleepEnd >= 10) {
-            bool allInBed = true;
-            bool anyInBed = false;
-            int characters = 0;
-
-            // EverybodyIsTryingToSleep: only peers with a character count (dead or loading ones do not)
-            for (auto &&peer : NetManager::instance().GetPeers()) {
-                auto &&zdo = peer->find_zdo();
-                if (!zdo)
-                    continue;
-                characters++;
-                bool inBed = zdo->get_bool(avledet::util::hashes::ZDO::Player::IN_BED, false);
-                if (!inBed) {
-                    allInBed = false;
-                    if (!AVL_CONFIG.playerSleepSolo)// early break if special sleep mode is not enabled
-                        break;
-                } else {
-                    // Early break if the special sleep is enabled
-                    if (AVL_CONFIG.playerSleepSolo) {
-                        anyInBed = true;
-                        break;
-                    }
-                }
-            }
-
-            if ((allInBed || (anyInBed && AVL_CONFIG.playerSleepSolo)) && characters > 0) {
-                m_playerSleep = true;
-
-                // EnvMan.SkipToMorning: the morning after the day of (now - morning)
-                auto day           = (int) ((m_worldTime - 0.15 * WORLD_TIME_LENGTH) / WORLD_TIME_LENGTH);
-                m_playerSleepUntil = (float) (day + 1) * WORLD_TIME_LENGTH + (float) WORLD_TIME_LENGTH * 0.15f;
-
-                // Set skip interval
-                m_worldTimeMultiplier = (m_playerSleepUntil - m_worldTime) / 12.0;
-                LOG_INFO(AVL_LOGGER, "{} players sleep, skipping {:.0f}s to the morning",
-                         NetManager::instance().GetPeers().size(), m_playerSleepUntil - m_worldTime);
+    // Game.UpdateSleeping, every 2 s: the sleep ends when the time skip is over
+    if (VUtils::run_periodic<struct game_update_sleeping>(2s)) {
+        if (m_playerSleep) {
+            if (!m_timeSkip) {
+                // Wake up players
 
                 if (AVL_CONFIG.playerSleepSolo) {
-                    // Players who are ALREADY in bed, go ahead and signal them to sleep
+                    // only awake sleeping players
                     for (auto &&peer : NetManager::instance().GetPeers()) {
                         auto &&zdo = peer->find_zdo();
                         if (zdo && zdo->get_bool(avledet::util::hashes::ZDO::Player::IN_BED, false)) {
                             RouteManager::instance().Invoke(peer->GetUserID(),
-                                                   avledet::util::hashes::Routed::S2C_RequestSleep);
-                        } else {
-                            peer->CornerMessage("The world is sleeping");
+                                                   avledet::util::hashes::Routed::S2C_RequestStopSleep);
                         }
                     }
                 } else {
-                    // Just signal to all players to sleep
-                    //  This assumes they are all already in bed
-                    RouteManager::instance().InvokeAll(avledet::util::hashes::Routed::S2C_RequestSleep);
+                    // wake every player
+                    RouteManager::instance().InvokeAll(avledet::util::hashes::Routed::S2C_RequestStopSleep);
+                }
+
+                m_playerSleep    = false;
+                m_playerSleepEnd = m_worldTime;
+                LOG_INFO(AVL_LOGGER, "Sleep ended, day {}", GetDay());
+
+                // Game.SleepStop: save if the last save is over a minute old
+                if (WorldManager::instance().SinceSave() > 60s)
+                    WorldManager::instance().Save();
+            }
+        } else {
+            // Game.UpdateSleeping: EnvMan afternoon or night (day fraction >= 0.5 or <= 0.15), not within
+            // 10 s of the last sleep
+            auto timeOfDay = GetTimeOfDay(m_worldTime);
+            if (!m_timeSkip && (timeOfDay >= 0.5 * WORLD_TIME_LENGTH || timeOfDay <= 0.15 * WORLD_TIME_LENGTH)
+                && m_worldTime - m_playerSleepEnd >= 10) {
+                bool allInBed = true;
+                bool anyInBed = false;
+                int characters = 0;
+
+                // EverybodyIsTryingToSleep: only peers with a character count (dead or loading ones do not)
+                for (auto &&peer : NetManager::instance().GetPeers()) {
+                    auto &&zdo = peer->find_zdo();
+                    if (!zdo)
+                        continue;
+                    characters++;
+                    bool inBed = zdo->get_bool(avledet::util::hashes::ZDO::Player::IN_BED, false);
+                    if (!inBed) {
+                        allInBed = false;
+                        if (!AVL_CONFIG.playerSleepSolo)// early break if special sleep mode is not enabled
+                            break;
+                    } else {
+                        // Early break if the special sleep is enabled
+                        if (AVL_CONFIG.playerSleepSolo) {
+                            anyInBed = true;
+                            break;
+                        }
+                    }
+                }
+
+                if ((allInBed || (anyInBed && AVL_CONFIG.playerSleepSolo)) && characters > 0) {
+                    m_playerSleep = true;
+
+                    SkipToMorning();
+                    LOG_INFO(AVL_LOGGER, "{} players sleep, skipping {:.0f}s to the morning",
+                             NetManager::instance().GetPeers().size(), m_skipToTime - m_worldTime);
+
+                    if (AVL_CONFIG.playerSleepSolo) {
+                        // Players who are ALREADY in bed, go ahead and signal them to sleep
+                        for (auto &&peer : NetManager::instance().GetPeers()) {
+                            auto &&zdo = peer->find_zdo();
+                            if (zdo && zdo->get_bool(avledet::util::hashes::ZDO::Player::IN_BED, false)) {
+                                RouteManager::instance().Invoke(peer->GetUserID(),
+                                                       avledet::util::hashes::Routed::S2C_RequestSleep);
+                            } else {
+                                peer->CornerMessage("The world is sleeping");
+                            }
+                        }
+                    } else {
+                        // Just signal to all players to sleep
+                        //  This assumes they are all already in bed
+                        RouteManager::instance().InvokeAll(avledet::util::hashes::Routed::S2C_RequestSleep);
+                    }
                 }
             }
         }
@@ -583,6 +584,17 @@ void Avledet::PeriodUpdate()
         if (since > AVL_CONFIG.m_world_save_interval)
             NetManager::instance().SaveWorld();
     }
+}
+
+// EnvMan.SkipToMorning and GetMorningStartSec. The IL rounds only (float)(day * length): Mono keeps
+// length * 0.15f and the sums in double
+void Avledet::SkipToMorning()
+{
+    double morning  = (double) (float) WORLD_TIME_LENGTH * (double) 0.15f;
+    int day         = (int) ((m_worldTime - morning) / (double) WORLD_TIME_LENGTH);
+    m_skipToTime    = (double) (float) ((std::int64_t) (day + 1) * WORLD_TIME_LENGTH) + morning;
+    m_timeSkip      = true;
+    m_timeSkipSpeed = (m_skipToTime - m_worldTime) / 12.0;
 }
 
 // Intended to be ran from ANY thread

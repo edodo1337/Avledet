@@ -454,6 +454,8 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
             "allheavysnow", "preset"};
 
     void GlobalKeyAdd(std::string_view keyStr, bool saveServerOption = true);
+    // ZoneSystem.ResetGlobalKeys: every key goes, the world's starting keys come back, sent to all
+    void GlobalKeysReset();
     void RegenerateLocations();
     // world modifier key as a scalar ("eventrate 200" -> 2), 1 when not set (Game.trySetScalarKey)
     float ScalarKey(std::string_view key) const;
