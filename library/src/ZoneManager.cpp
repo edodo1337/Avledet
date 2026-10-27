@@ -435,9 +435,13 @@ static std::string KeyName(std::string_view key, std::string &value)
     return avledet::lexicon::to_lower(space != std::string_view::npos && space > 0 ? key.substr(0, space) : key);
 }
 
+// (key + " " + value).TrimEnd(): no trailing whitespace, also from the value
 static std::string KeyLine(std::string const &name, std::string const &value)
 {
-    return value.empty() ? name : name + " " + value;
+    auto line = name + " " + value;
+    while (!line.empty() && std::isspace((unsigned char) line.back()))
+        line.pop_back();
+    return line;
 }
 
 // ZoneSystem.GlobalKeyAdd: one entry per key name, server options also go to the world's starting keys
@@ -639,7 +643,7 @@ void ZoneManager::TryGenerateNearbyZones(Vector3f refPoint)
 
 bool ZoneManager::GenerateZoneBlocking(ZoneID zone)
 {
-    if (is_inside_world_radius(zone)) {
+    if (is_inside_generation_radius(zone)) {
         //if ((zone.x > -WORLD_INNER_ZRADIUS && zone.y > -WORLD_INNER_ZRADIUS
         //&& zone.x < WORLD_INNER_ZRADIUS && zone.y < WORLD_INNER_ZRADIUS))
         //{
@@ -654,7 +658,7 @@ bool ZoneManager::GenerateZoneBlocking(ZoneID zone)
 
 bool ZoneManager::TryPollGenerateZone(ZoneID zone)
 {
-    if (is_inside_world_radius(zone) && !IsZoneGenerated(zone)) {
+    if (is_inside_generation_radius(zone) && !IsZoneGenerated(zone)) {
         //if ((zone.x >= -WORLD_INNER_ZRADIUS && zone.y >= -WORLD_INNER_ZRADIUS
         //    && zone.x <= WORLD_INNER_ZRADIUS && zone.y <= WORLD_INNER_ZRADIUS)
         //    && !IsZoneGenerated(zone)) {

@@ -225,9 +225,9 @@ namespace avledet::network {
                 LOG_TRACE_L3(AVL_LOGGER, "sending: | {} |",
                              quill::utility::to_hex(array.data(), array.size()));
 
+                // flag 8 like ZSteamSocket: reliable, Nagle on
                 auto res = get_steam_sockets()->SendMessageToConnection(
-                        m_conn, array.data(), (uint32_t) array.size(),
-                        k_nSteamNetworkingSend_Reliable | k_nSteamNetworkingSend_ReliableNoNagle, nullptr);
+                        m_conn, array.data(), (uint32_t) array.size(), k_nSteamNetworkingSend_Reliable, nullptr);
 
                 if (res != k_EResultOK) {
                     LOG_TRACE_L1(AVL_LOGGER, "send_queued() failed: {}", magic_enum::enum_name(res));

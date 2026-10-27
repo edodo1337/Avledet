@@ -396,15 +396,25 @@ bool Avledet::update()
 
     AVL_SCRIPT_EVENT(ScriptManager::Events::Update);
 
-    NetManager::instance().Update();
-    ZdoManager::instance().Update();
-    ZoneManager::instance().Update();
-    PersistentEventManager::instance().Update();
+    // Unity logs an exception of one MonoBehaviour.Update and runs the next frame: one manager's error
+    // does not end the server (and lose everything since the last save)
+    auto guarded = [](char const *what, auto &&update) {
+        try {
+            update();
+        } catch (std::exception const &e) {
+            if (VUtils::run_periodic<struct guarded_update_log>(5s))
+                LOG_ERROR(AVL_LOGGER, "{} update failed: {}", what, e.what());
+        }
+    };
+    guarded("NetManager", [] { NetManager::instance().Update(); });
+    guarded("ZdoManager", [] { ZdoManager::instance().Update(); });
+    guarded("ZoneManager", [] { ZoneManager::instance().Update(); });
+    guarded("PersistentEventManager", [] { PersistentEventManager::instance().Update(); });
 #if AVL_IS_ON(AVL_RANDOM_EVENTS)
-    RaidManager::instance().Update();
+    guarded("RaidManager", [] { RaidManager::instance().Update(); });
 #endif
 #if AVL_IS_ON(AVL_ZONE_GENERATION)
-    HMBuildManager::instance().Update();
+    guarded("HMBuildManager", [] { HMBuildManager::instance().Update(); });
 #endif
 
 #if AVL_IS_ON(AVL_ENABLE_SCRIPTING)
@@ -412,9 +422,8 @@ bool Avledet::update()
 #endif
 
     //TODO run periodically starting from now?
-    if (VUtils::run_periodic<struct server_period_update>(1s)) {
-        PeriodUpdate();
-    }
+    if (VUtils::run_periodic<struct server_period_update>(1s))
+        guarded("PeriodUpdate", [this] { PeriodUpdate(); });
 
     // tick time for the status line; a long one is worth a warning (zone generation, a save)
     auto work = std::chrono::steady_clock::now() - now;

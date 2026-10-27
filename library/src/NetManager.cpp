@@ -270,6 +270,8 @@ void NetManager::OnPeerConnect(Peer::Ptr peer)
         // TODO create template guide
         //reader.read<avledet::util::Map<std::string_view, std::string_view>>();
 
+        // RPC_ServerSyncedPlayerData replaces the whole set
+        peer->m_syncData.clear();
         auto count = reader.read<std::int32_t>();
         for (int i = 0; i < count; i++) {
             // Read player event data (only 2):

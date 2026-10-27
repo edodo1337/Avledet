@@ -31,10 +31,6 @@ Peer::Peer(ISocket::Ptr socket) :
     this->Register("ServerHandshake", [](Peer::Ptr rpc, std::string_view inviteSecretKey) {
         rpc->Register("PeerInfo", [](Peer::Ptr rpc, DataReader reader) {
             rpc->m_uid = reader.read<std::int64_t>();
-#if AVL_IS_ON(AVL_DISALLOW_MALICIOUS_PLAYERS)
-            if (!rpc->m_uid)
-                throw std::runtime_error("peer provided 0 owner");
-#endif
             auto version = reader.read<std::string_view>();
             LOG_INFO(AVL_LOGGER, "Client {} has version {}", rpc->m_socket->get_host_name(), version);
 
@@ -88,8 +84,9 @@ Peer::Peer(ISocket::Ptr socket) :
             if (password != std::string_view(NetManager::instance().m_passwordHash))
                 return rpc->close(ConnectionStatus::ErrorPassword);
 
-            // vanilla refuses only the same session id (IsConnected(uid))
-            if (NetManager::instance().FindPeerByUserID(rpc->GetUserID()))
+            // vanilla refuses only the same session id (IsConnected(uid)); uid 0 matches the joining peer
+            // itself, still 0 there
+            if (!rpc->m_uid || NetManager::instance().FindPeerByUserID(rpc->GetUserID()))
                 return rpc->close(ConnectionStatus::ErrorAlreadyConnected);
 
             NetManager::instance().OnPeerConnect(rpc);
@@ -128,6 +125,8 @@ void Peer::SetSimDistance(DataReader &reader)
 void Peer::update()
 {
     ZoneScoped;
+
+    m_socket->update();
 
     auto now(std::chrono::steady_clock::now());
 

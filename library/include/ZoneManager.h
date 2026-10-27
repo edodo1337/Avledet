@@ -237,6 +237,14 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
                 < WORLD_INNER_ZRADIUS * WORLD_INNER_ZRADIUS);
     }
 
+    // vanilla CreateGhostZones has no limit: a player at the world edge (pushed back past 10420 m) gets the
+    // ghost zones around him, up to about ring 169
+    bool is_inside_generation_radius(ZoneID const &zone)
+    {
+        int r = WORLD_INNER_ZRADIUS + NEAR_ZRADIUS + DISTANT_ZRADIUS + 1;
+        return zone.x * zone.x + zone.y * zone.y < r * r;
+    }
+
     //static ZoneManager &instance() {
     //    // Erase copy constructor
     //    Base(const Base&) = delete;

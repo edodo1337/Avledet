@@ -39,6 +39,8 @@ namespace avledet::network {
 
         virtual std::vector<char> Recv() noexcept = 0;
         virtual void send(std::vector<char> buf) noexcept = 0;
+        // once a frame: ZSteamSocket.Update retries what Steam did not take
+        virtual void update() noexcept {}
 
         virtual std::string get_host_name() noexcept = 0;
         virtual std::string get_address() noexcept   = 0;
@@ -59,6 +61,7 @@ namespace avledet::network {
 
       private:
         void send_queued();
+        void update() noexcept override { send_queued(); }
 
         void init_identifiers();
 
