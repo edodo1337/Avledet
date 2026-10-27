@@ -69,14 +69,28 @@ void ZdoManager::Update()
         }
     }
 
-    if (VUtils::run_periodic<struct periodic_send_zdos>(AVL_CONFIG.m_zdo_send_interval)) {
-        // TODO
-        //  new send mechanism instead avoids long-blocking server thread
-        //  sends ZDOs out in 0.05 interval, round-robin fashion for one peer for every Update loop
-        //  (then waits for 0.05 to be over)
-        for (auto &&peer : peers) {
-            SendZDOs(peer, false);
+    // vanilla SendZDOToPeers2 runs once a frame: when the timer is over 0.05 s (send-interval), one peer a
+    // frame, then the wait again. One peer gets a packet every 2 frames, more peers every n + 1
+    auto now = std::chrono::steady_clock::now();
+    m_sendFrames = std::min(m_sendFrames + std::chrono::duration<double>(now - m_sendClock).count(), 0.5);
+    m_sendClock  = now;
+    constexpr double frame = 1.0 / Avledet::VANILLA_SERVER_FPS;
+    float threshold = std::chrono::duration<float>(AVL_CONFIG.m_zdo_send_interval).count();
+    for (; m_sendFrames >= frame; m_sendFrames -= frame) {
+        if (peers.empty())
+            continue;
+        m_sendTimer += (float) frame;
+        if (m_nextSendPeer < 0) {
+            if (m_sendTimer > threshold) {
+                m_nextSendPeer = 0;
+                m_sendTimer    = 0;
+            }
+            continue;
         }
+        if (m_nextSendPeer < (int) peers.size())
+            SendZDOs(peers[m_nextSendPeer], false);
+        if (++m_nextSendPeer >= (int) peers.size())
+            m_nextSendPeer = -1;
     }
 
     if (!m_destroySendList.empty()) {

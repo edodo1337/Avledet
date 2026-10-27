@@ -18,6 +18,12 @@
 
 class ZdoManager : public avledet::util::IManager<ZdoManager>
 {
+    // vanilla SendZDOToPeers2 state, stepped in frames of the vanilla server
+    std::chrono::steady_clock::time_point m_sendClock = std::chrono::steady_clock::now();
+    double m_sendFrames = 0;
+    float m_sendTimer   = 0;
+    int m_nextSendPeer  = -1;
+
     friend class NetManager;
     friend class Avledet;
     friend class ZDO;

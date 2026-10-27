@@ -137,6 +137,11 @@ class Avledet : public avledet::util::IManager<Avledet>
 
     static constexpr int WORLD_TIME_LENGTH = 1800;
 
+    // frames a second of the vanilla dedicated server: it asks for 30 (targetFrameRate) and gets about
+    // 28.2 (measured with the bot, idle and generating). Its once-a-frame logic (time skip, ZDO sends)
+    // is stepped at this rate
+    static constexpr double VANILLA_SERVER_FPS = 28.2;
+
     // Get the current day given a world time
     static int GetDay(WorldTime worldTime)
     {
