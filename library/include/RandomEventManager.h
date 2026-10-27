@@ -22,6 +22,8 @@ class RaidManager : public avledet::util::IManager<RaidManager>
         avledet::util::Biome m_biome {};
         bool m_nearBaseOnly {};
         bool m_pauseIfNoPlayerInArea {};
+        float m_eventRange {};
+        bool m_playerConditions {};// with PlayerEvents, the players' possibleEvents decide
 
       public:
         Event() {}
@@ -34,27 +36,24 @@ class RaidManager : public avledet::util::IManager<RaidManager>
     float m_eventIntervalTimer = 0;
 
   private:
-    // The current random active event in the world
-    //	null means no event is active
+    // RandEventSystem.m_randomEvent: the current event, its elapsed time and duration
     Event const *m_activeEvent {};
     Vector3f m_activeEventPos;
-    std::chrono::nanoseconds m_activeEventRemaining;
-    std::chrono::nanoseconds m_activeEventInitialDuration;
+    float m_activeTime {};
+    float m_activeDuration {};
 
   private:
     void SendCurrentRandomEvent();
 
     std::optional<std::pair<std::reference_wrapper<Event const>, Vector3f>> GetPossibleRandomEvent();
 
-    // Checks whether the server has or doesnt have
-    //	the global keys requested of the event
-    bool CheckGlobalKeys(Event const &e);
+    bool AnyPlayerInArea() const;
 
   public:
     void Init();
     void Update();
 
-    void SetCurrentRandomEvent(Event const &e, Vector3f pos, std::chrono::nanoseconds ns);
+    void SetCurrentRandomEvent(Event const &e, Vector3f pos, std::chrono::nanoseconds duration);
 
     // Get an event by name
     //	Returns null if not found

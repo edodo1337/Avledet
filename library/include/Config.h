@@ -114,7 +114,6 @@ public:
 
     float m_raids_chance {};
     std::chrono::seconds m_raids_interval {};
-    float m_raids_radius {};
     bool m_raids_require_keys {};
 
 #if AVL_IS_ON(AVL_DISCORD_INTEGRATION)

@@ -424,7 +424,6 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
     std::vector<int> m_nonScaledDropTypes;
 
     void LoadLoot();
-    float ScalarKey(std::string_view key) const;
     int ScaleDrops(VUtils::Random::State &state, ItemDef const &item, int min, int max) const;
     void FillContainer(VUtils::Random::State &state, ZDO &zdo, ContainerDef const &c) const;
     void PickItem(VUtils::Random::State &state, ZDO &zdo, PickableDef const &p) const;
@@ -446,6 +445,8 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
     void ExpireLifetimes(bool all);
 
     void GlobalKeyAdd(std::string_view keyStr, bool saveServerOption = true);
+    // world modifier key as a scalar ("eventrate 200" -> 2), 1 when not set (Game.trySetScalarKey)
+    float ScalarKey(std::string_view key) const;
     bool GlobalKeyRemove(std::string_view keyStr, bool saveServerOption = true);
 
     // ZoneSystem.GetGlobalKey: by the key name, case insensitive, a value after a space ignored

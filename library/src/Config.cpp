@@ -263,8 +263,6 @@ void ConfigManager::load()
             r(m_raids_chance, events, "chance", .2f, [](float val) { return val < 0 || val > 1; });
             r(m_raids_interval, events, "interval", 46min,
               [](std::chrono::seconds val) { return val < 0s; });
-            r(m_raids_radius, events, "activation-radius", 96,
-              [](float val) { return val < 1 || val > 96 * 4; });
             r(m_raids_require_keys, events, "require-keys", true, nullptr);
 
             /*

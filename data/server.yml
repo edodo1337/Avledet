@@ -9,7 +9,6 @@ server:
   dedicated: true
   bind-address: 0.0.0.0
 players:
-  whitelist: false
   max-online: 10
   authenticate: true
   timeout: 30s
@@ -43,7 +42,6 @@ dungeons:
 events:
   chance: 0.2
   interval: 46min
-  activation-radius: 96
   require-keys: true
 experimental:
   server-tcp: false
