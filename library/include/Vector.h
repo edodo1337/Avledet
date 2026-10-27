@@ -143,42 +143,39 @@ namespace avledet::util::CSU {
             return !(*this == rhs);
         }
 
+        // The UnityEngine C# math as the game's Mono runs it: the sums of products in double,
+        // rounded once; magnitude and distance take the square root of that double
+
         constexpr float dot(Vector2<T> const &rhs) const
         {
-            return (float)(x * rhs.x + y * rhs.y);
+            return (float) ((double) x * rhs.x + (double) y * rhs.y);
         }
 
         constexpr float sq_magnitude() const
         {
-            return (float)(x * x + y * y);
+            return this->dot(*this);
         }
 
         constexpr float magnitude() const
         {
-            return std::sqrt(this->sq_magnitude());
+            return (float) std::sqrt((double) x * x + (double) y * y);
         }
 
         constexpr float sq_distance_to(Vector2<T> const &rhs) const
         {
-            return (float)((x - rhs.x) * (x - rhs.x) + (y - rhs.y) * (y - rhs.y));
+            return (*this - rhs).sq_magnitude();
         }
 
         constexpr float distance_to(Vector2<T> const &rhs) const
         {
-            return std::sqrt(this->sq_distance_to(rhs));
+            return (*this - rhs).magnitude();
         }
 
+        // Vector2.normalized
         constexpr Vector2<T> normal() const
         {
-            auto sq = this->sq_magnitude();
-
-            if (sq > 1E-05f * 1E-05f) {
-                return *this / std::sqrt(sq);
-                //return *this * VUtils::Math::FISQRT(sqmagnitude);
-            } else {
-                //return zero();
-                return ZERO;
-            }
+            float m = this->magnitude();
+            return m > 1E-05f ? *this / m : ZERO;
         }
 
         //static constexpr Vector2<T> zero()
@@ -346,47 +343,43 @@ namespace avledet::util::CSU {
             return Vector3<T>(y * rhs.z - z * rhs.y, z * rhs.x - x * rhs.z, x * rhs.y - y * rhs.x);
         }
 
+        // The UnityEngine C# math as the game's Mono runs it, see Vector2
         constexpr float dot(Vector3<T> const &rhs) const
         {
-            return x * rhs.x + y * rhs.y + z * rhs.z;
+            return (float) ((double) x * rhs.x + (double) y * rhs.y + (double) z * rhs.z);
         }
 
         constexpr float sq_magnitude() const
         {
-            return x * x + y * y + z * z;
+            return this->dot(*this);
         }
 
         constexpr float magnitude() const
         {
-            return std::sqrt(this->sq_magnitude());
+            return (float) std::sqrt((double) x * x + (double) y * y + (double) z * z);
         }
 
         constexpr float sq_distance_to(Vector3<T> const &rhs) const
         {
-            return (x - rhs.x) * (x - rhs.x) + (y - rhs.y) * (y - rhs.y) + (z - rhs.z) * (z - rhs.z);
+            return (*this - rhs).sq_magnitude();
         }
 
         constexpr float distance_to(Vector3<T> const &rhs) const
         {
-            return std::sqrt(this->sq_distance_to(rhs));
+            return (*this - rhs).magnitude();
         }
 
+        // Vector3.normalized
         constexpr Vector3<T> normal() const
         {
-            auto sq = this->sq_magnitude();
-
-            if (sq > 1E-05f * 1E-05f * 1E-05f) {
-                return *this / std::sqrt(sq);
-                //return *this * VUtils::Math::FISQRT(sqmagnitude);
-            } else {
-                //return zero();
-                return ZERO;
-            }
+            float m = this->magnitude();
+            return m > 1E-05f ? *this / m : ZERO;
         }
 
+        // Utils.DistanceXZ: Mathf.Sqrt of the double sum rounded to float
         constexpr float sq_magnitude_h() const
         {
-            return x * x + z * z;
+            return (float) ((double) x * x + (double) z * z);
         }
 
         constexpr float magnitude_h() const
@@ -396,7 +389,7 @@ namespace avledet::util::CSU {
 
         constexpr float sq_distance_to_h(Vector3<T> const &rhs) const
         {
-            return (x - rhs.x) * (x - rhs.x) + (z - rhs.z) * (z - rhs.z);
+            return (*this - rhs).sq_magnitude_h();
         }
 
         //TODO name
