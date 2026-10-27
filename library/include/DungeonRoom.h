@@ -87,6 +87,9 @@ struct RoomInstance
     int m_placeOrder = 0;
     int m_seed       = 0;
     std::vector<std::unique_ptr<RoomConnectionInstance>> m_connections;
+    // room.transform.position/rotation: the stored local pose read back through the generator
+    Vector3f m_transformPos;
+    Quaternion m_transformRot;
 
     // the room is a child of the generator transform (genPos, genRot, genScale): Unity stores its
     // local pose, a connection's world pose comes back through that hierarchy
@@ -98,6 +101,12 @@ struct RoomInstance
         m_placeOrder(placeOrder),
         m_seed(seed)
     {
+        Vector3f const one(1, 1, 1);
+        auto localPos  = avledet::unity::ToLocal(genPos, genRot, genScale, pos);
+        auto localRot  = avledet::unity::ToLocal(genRot, genScale, rot);
+        m_transformPos = avledet::unity::ToWorld(genPos, genRot, genScale, localPos);
+        m_transformRot = avledet::unity::ToWorld(genRot, genScale, localRot);
+
         for (auto &&conn : room.GetConnections()) {
             // Find the world position of the connection,
             //	given parent (Room) position and localPosition (Connection)
@@ -113,9 +122,6 @@ struct RoomInstance
             //m_connections.emplace_back(*conn.get(), childWorldPos, childWorldRot, placeOrder);
 
             using namespace avledet::unity;
-            Vector3f one(1, 1, 1);
-            auto localPos = ToLocal(genPos, genRot, genScale, pos);
-            auto localRot = ToLocal(genRot, genScale, rot);
             auto worldPos = ToWorld(genPos, genRot, genScale, ToWorld(localPos, localRot, one, conn->m_localPos));
             auto worldRot = ToWorld(genRot, genScale, ToWorld(localRot, one, conn->m_localRot));
 

@@ -409,19 +409,9 @@ void DungeonGenerator::Save()
     for (const auto& instance : m_placed_rooms) {
         const auto &room     = instance->m_room.get();
 
-        Vector3f pos   = instance->m_pos;
-        Quaternion rot = instance->m_rot;
-
-        if (m_dungeon.m_algorithm == Dungeon::Algorithm::Dungeon) {
-            std::tie(pos, rot) = VUtils::Physics::LocalToGlobal(instance->m_pos, instance->m_rot, Vector3f::ZERO, Quaternion::IDENTITY);
-        }
-
-        auto hash = room.GetHash();
-        //LOG_INFO(AVL_LOGGER, "hash: {}", hash);
-
-        writer.write(hash);
-        writer.write(pos);
-        writer.write(rot.euler_angles());
+        writer.write(room.GetHash());
+        writer.write(instance->m_transformPos);
+        writer.write(instance->m_transformRot.euler_angles());
     }
 
     // write to console
