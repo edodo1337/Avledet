@@ -254,10 +254,9 @@ class ZdoManager : public avledet::util::IManager<ZdoManager>
     void GetZDOs_Zone(ZoneID zone, ZDO::reference_list &out);
     // Get all ZDOs strictly within neighboring zones
     void GetZDOs_NeighborZones(ZoneID zone, ZDO::reference_list &out);
-    // Get all ZDOs strictly within distant zones
-    void GetZDOs_DistantZones(ZoneID zone, ZDO::reference_list &out);
-    // Get all ZDOs strictly within a zone, its neighboring zones, and its distant zones
-    void GetZDOs_ActiveZones(ZoneID zone, ZDO::reference_list &out, ZDO::reference_list &outDistant);
+    // Get the ZDOs a peer with this simulation distance syncs: near zones, distant flagged ones further out
+    void GetZDOs_ActiveZones(ZoneID zone, SimulationDistance const &sd, ZDO::reference_list &out,
+                             ZDO::reference_list &outDistant);
     // Get all ZDOs strictly within a zone that are distant flagged
     void GetZDOs_Distant(ZoneID sector, ZDO::reference_list &objects);
 

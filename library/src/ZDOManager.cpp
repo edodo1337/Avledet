@@ -702,16 +702,43 @@ ZDO::smart_set::iterator ZdoManager::_EraseZDO(ZDO::smart_set::iterator itr)
     return m_objectsByID.erase(itr);
 }
 
-void ZdoManager::GetZDOs_ActiveZones(ZoneID zone, ZDO::reference_list &out, ZDO::reference_list &outDistant)
+// ZDOMan.FindSectorObjects for a peer's simulation distance: rings of zones around the peer, squares when
+// classic, else only zones whose center is within the radius (ZoneSystem.ZonesWithinRadius)
+void ZdoManager::GetZDOs_ActiveZones(ZoneID zone, SimulationDistance const &sd, ZDO::reference_list &out,
+                                     ZDO::reference_list &outDistant)
 {
-    // Add ZDOs from immediate sector
+    auto within = [&](ZoneID z, int radius, bool ghost) {
+        float r  = (float) radius * 64.f + (ghost ? 64.f * 0.8f : 64.f * 0.5f);
+        float dx = (float) (z.x - zone.x) * 64.f, dz = (float) (z.y - zone.y) * 64.f;
+        return dx * dx + dz * dz < r * r;
+    };
+    auto ring = [&](int k, auto &&f) {
+        for (int x = zone.x - k; x <= zone.x + k; x++) {
+            f(ZoneID(x, zone.y - k));
+            f(ZoneID(x, zone.y + k));
+        }
+        for (int y = zone.y - k + 1; y <= zone.y + k - 1; y++) {
+            f(ZoneID(zone.x - k, y));
+            f(ZoneID(zone.x + k, y));
+        }
+    };
+    auto nearZone = [&](ZoneID z) {
+        return std::max(std::abs(z.x - zone.x), std::abs(z.y - zone.y)) <= sd.m_near
+            && (sd.m_classic || within(z, sd.m_near, false));
+    };
+
     GetZDOs_Zone(zone, out);
-
-    // Add ZDOs from nearby zones
-    GetZDOs_NeighborZones(zone, out);
-
-    // Add ZDOs from distant zones
-    GetZDOs_DistantZones(zone, outDistant);
+    for (int k = 1; k <= sd.m_near; k++)
+        ring(k, [&](ZoneID z) {
+            if (nearZone(z))
+                GetZDOs_Zone(z, out);
+        });
+    int total = sd.m_near + sd.m_far;
+    for (int k = sd.m_classic ? sd.m_near + 1 : 1; k <= total; k++)
+        ring(k, [&](ZoneID z) {
+            if ((sd.m_classic || within(z, total, true)) && !nearZone(z))
+                GetZDOs_Distant(z, outDistant);
+        });
 }
 
 void ZdoManager::GetZDOs_NeighborZones(ZoneID zone, ZDO::reference_list &sectorObjects)
@@ -728,21 +755,6 @@ void ZdoManager::GetZDOs_NeighborZones(ZoneID zone, ZDO::reference_list &sectorO
     }
 }
 
-void ZdoManager::GetZDOs_DistantZones(ZoneID zone, ZDO::reference_list &out)
-{
-    for (std::int16_t r = ZoneManager::NEAR_ZRADIUS + 1;
-         r <= ZoneManager::NEAR_ZRADIUS + ZoneManager::DISTANT_ZRADIUS; r++) {
-        for (std::int16_t x = zone.x - r; x <= zone.x + r; x++) {
-            GetZDOs_Distant(ZoneID(x, zone.y - r), out);
-            GetZDOs_Distant(ZoneID(x, zone.y + r), out);
-        }
-        for (std::int16_t y = zone.y - r + 1; y <= zone.y + r - 1; y++) {
-            GetZDOs_Distant(ZoneID(zone.x - r, y), out);
-            GetZDOs_Distant(ZoneID(zone.x + r, y), out);
-        }
-    }
-}
-
 std::list<std::pair<ZDO::reference, float>> ZdoManager::CreateSyncList(Peer::Ptr peer)
 {
     auto zone = ZoneManager::WorldToZonePos(peer->m_pos);
@@ -750,55 +762,33 @@ std::list<std::pair<ZDO::reference, float>> ZdoManager::CreateSyncList(Peer::Ptr
     // Gather all updated ZDO's
     ZDO::reference_list zoneZDOs;
     ZDO::reference_list distantZDOs;
-    GetZDOs_ActiveZones(zone, zoneZDOs, distantZDOs);
+    GetZDOs_ActiveZones(zone, peer->m_simDistance, zoneZDOs, distantZDOs);
 
     std::list<std::pair<ZDO::reference, float>> result;
 
-    // Prepare client-side outdated ZDO's
+    // ServerSortSendZDOS: distance minus 1.5 m per second since the last send (up to 100 s)
     auto const time(Avledet::instance().Time());
     for (auto &&zdo : zoneZDOs) {
         decltype(Peer::m_zdos)::iterator outItr;
         if (peer->IsOutdatedZDO(zdo, outItr)) {
-            float weight = 150;
-            if (outItr != peer->m_zdos.end())
-                weight = std::min(time - outItr->second.second, 100.f) * 1.5f;
-
-            result.push_back({zdo, zdo->get_position().sq_distance_to(peer->m_pos) - weight * weight});
+            float age = outItr != peer->m_zdos.end() ? std::clamp(time - outItr->second.second, 0.f, 100.f) : 100.f;
+            result.push_back({zdo, zdo->get_position().distance_to(peer->m_pos) - age * 1.5f});
         }
     }
 
-    // Prioritize ZDO's
-    result.sort([&](std::pair<ZDO::reference, float> const &first,
-                    std::pair<ZDO::reference, float> const &second) {
-        // Sort in rough order of:
-        //	flag -> type/priority -> distance ASC -> age ASC
-
-        // https://www.reddit.com/r/valheim/comments/mga1iw/understanding_the_new_networking_mechanisms_from/
-
-        auto &&a = first.first;
-        auto &&b = second.first;
-
-        bool flag = a->get_type() == avledet::util::ObjectType::PRIORITIZED && a->has_owner()
-                    && !a->is_owner(peer->GetUserID());
+    // ServerSendCompare: prioritized objects owned by others first, then higher type, then the value
+    result.sort([&](std::pair<ZDO::reference, float> const &first, std::pair<ZDO::reference, float> const &second) {
+        auto &&a   = first.first;
+        auto &&b   = second.first;
+        bool flag  = a->get_type() == avledet::util::ObjectType::PRIORITIZED && a->has_owner()
+                 && !a->is_owner(peer->GetUserID());
         bool flag2 = b->get_type() == avledet::util::ObjectType::PRIORITIZED && b->has_owner()
-                     && !b->is_owner(peer->GetUserID());
-
-        if (flag == flag2) {
-            if ((flag && flag2) || a->get_type() == b->get_type()) {
-                return first.second < second.second;
-            } else
-                // > (shows large trees first)
-                // <  (shows smallest, then small trees first)
-                // >= (shows small trees and large trees simultaneously)
-
-                // the problem with seemingly slowly perceived network speed is not with the actual network,
-                // but with the ZDOManager being bottlenecked by the expensive HeightmapBuilder
-                //	(if Heightmap is not ready, vegetation cannot be generated -> ZDOs cannot be sent)
-                //	this only applies to newly generated areas
-                return a->get_type() >= b->get_type();
-        } else {
+                  && !b->is_owner(peer->GetUserID());
+        if (flag != flag2)
             return flag;
-        }
+        if (flag || a->get_type() == b->get_type())
+            return first.second < second.second;
+        return a->get_type() > b->get_type();
     });
 
     // Add a minimum amount of ZDOs

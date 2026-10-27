@@ -1837,6 +1837,8 @@ void ZoneManager::GenerateFeature(Feature const &location, avledet::util::Hash s
                     nzdo->set_rotation(rot * child.m_rot);
                     AwakeRandom(state, *nzdo, randomDamage);
                     RegisterSpawned(*nzdo);
+                    if (auto offset = snapOffset(j))
+                        AddSnapper(nzdo, *offset);
                 }
             }
         } else {
