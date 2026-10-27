@@ -14,6 +14,7 @@
     #include <future>
     #include <mutex>
 
+    #include "AltBiomes.h"
     #include "GeoManager.h"
     #include "TerrainModifier.h"
     #include "VUtilsMathf.h"
@@ -128,18 +129,23 @@ void HMBuildManager::Build(BaseHeightmap *base, ZoneID zone)
 
     auto &&GEO = GeoManager::instance();
 
-    //WorldGenerator worldGen = data.m_worldGen;
-    //data.m_cornerBiomes = new Heightmap.Biome[4];
-    base->m_cornerBiomes[0] = GEO.GetBiome(baseWorldPos.x, baseWorldPos.z,  0.02f, false);
-    
-    base->m_cornerBiomes[1] = GEO.GetBiome((float)((double)baseWorldPos.x + (double)ZoneManager::UNITS_PER_ZONE), baseWorldPos.z, 0.02f, false);
-    base->m_cornerBiomes[2] = GEO.GetBiome(baseWorldPos.x, (float)((double)baseWorldPos.z + (double)ZoneManager::UNITS_PER_ZONE), 0.02f, false);
-    base->m_cornerBiomes[3] = GEO.GetBiome((float)((double)baseWorldPos.x + (double)ZoneManager::UNITS_PER_ZONE), (float)((double)baseWorldPos.z + (double)ZoneManager::UNITS_PER_ZONE), 0.02f, false);
+    // vanilla 1.0: corner biomes (HaveBiome, Heightmap.GetBiome) come from the biome sector grid,
+    // the heights still blend the WorldGenerator.GetBiome corners
+    float const x0 = baseWorldPos.x, z0 = baseWorldPos.z;
+    float const x1 = (float)((double)x0 + (double)ZoneManager::UNITS_PER_ZONE);
+    float const z1 = (float)((double)z0 + (double)ZoneManager::UNITS_PER_ZONE);
 
-    auto const& biome1 = base->m_cornerBiomes[0];
-    auto const& biome2 = base->m_cornerBiomes[1];
-    auto const& biome3 = base->m_cornerBiomes[2];
-    auto const& biome4 = base->m_cornerBiomes[3];
+    auto &&alt = AltBiomeManager::instance();
+    auto sector = [&](float x, float z) { return (avledet::util::Biome) alt.GetBiomeSector(x, z).m_biome; };
+    base->m_cornerBiomes[0] = sector(x0, z0);
+    base->m_cornerBiomes[1] = sector(x1, z0);
+    base->m_cornerBiomes[2] = sector(x0, z1);
+    base->m_cornerBiomes[3] = sector(x1, z1);
+
+    auto const biome1 = GEO.GetBiome(x0, z0, 0.02f, false);
+    auto const biome2 = GEO.GetBiome(x1, z0, 0.02f, false);
+    auto const biome3 = GEO.GetBiome(x0, z1, 0.02f, false);
+    auto const biome4 = GEO.GetBiome(x1, z1, 0.02f, false);
 
     base->m_baseHeights.resize(Heightmap::E_WIDTH * Heightmap::E_WIDTH);
     base->m_base_mask.resize(Heightmap::E_WIDTH * Heightmap::E_WIDTH);

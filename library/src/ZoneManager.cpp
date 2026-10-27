@@ -142,9 +142,13 @@ void ZoneManager::PostPrefabInit()
 
         auto count = pkg.read<std::int32_t>();
         for (int i = 0; i < count; i++) {
+            // full GameObject name seeds the vegetation, the prefab is the name before ' ' or '('
             auto prefabName = pkg.read<std::string>();
 
-            auto veg = std::make_unique<Foliage>(PrefabManager::instance().get_prefab(prefabName));
+            auto veg = std::make_unique<Foliage>(
+                    PrefabManager::instance().get_prefab(prefabName.substr(0, prefabName.find_first_of(" ("))));
+            veg->m_seedHash = avledet::util::get_stable_hash(prefabName);
+            veg->m_seedName = prefabName;
 
             //veg->m_prefab = PrefabManager::instance().get_prefab(prefabName);
 
@@ -187,6 +191,12 @@ void ZoneManager::PostPrefabInit()
             veg->m_maxDistanceFromCenter        = pkg.read<float>();
             veg->m_name                         = pkg.read<std::string>();
             veg->m_altBiomeParent               = pkg.read<std::string>();
+            auto colliders = pkg.read<std::int32_t>();
+            for (int k = 0; k < colliders; k++)
+                veg->m_colliders.push_back(avledet::phys::Collider::read(pkg));
+            colliders = pkg.read<std::int32_t>();
+            for (int k = 0; k < colliders; k++)
+                veg->m_rescaleColliders.push_back(avledet::phys::Collider::read(pkg));
 
             m_foliage.push_back(std::move(veg));
         }
@@ -195,6 +205,7 @@ void ZoneManager::PostPrefabInit()
             throw std::runtime_error("pkg has unread bytes, format mismatch");
 
         LOG_NOTICE(AVL_LOGGER, "Loaded {} vegetation", count);
+        avledet::phys::World::instance().LoadMeshes();
 
         std::ifstream awakeIn("awake.json");
         if (!awakeIn)
@@ -596,12 +607,26 @@ bool ZoneManager::TryPollGenerateZone(ZoneID zone)
     return false;
 }
 
+// probe zones mode (AVL_PROBE_ZONES): a zone generates alone as in tools/worldgen-probe,
+// the terrain of other zones is not loaded
+static std::optional<ZoneID> s_probeZone;
+
+static bool OutsideProbeZone(Vector3f p)
+{
+    return s_probeZone && ZoneManager::WorldToZonePos(p) != *s_probeZone;
+}
+
 void ZoneManager::PopulateZone(Heightmap &heightmap)
 {
     ZoneScoped;
 
+    if (std::getenv("AVL_PROBE_ZONES"))
+        s_probeZone = heightmap.get_zone();
+
     //#if AVL_IS_ON(AVL_ZONE_GENERATION)
     std::vector<ClearArea> m_tempClearAreas;
+    // vanilla destroys the objects of other zones far from the reference point, a zone sees its own
+    avledet::phys::World::instance().Reset(ZoneToWorldPos(heightmap.get_zone()));
 
     if (AVL_CONFIG.m_world_gen_features)
         m_tempClearAreas = TryGenerateFeature(heightmap.get_zone());
@@ -646,6 +671,45 @@ static bool AltBiomesAllow(ZoneManager::Foliage const &veg, Vector3f p)
     return parentFound;
 }
 
+// vegetation raycasts for the probe (AVL_PROBE_PHYS=file), the lines of tools/worldgen-probe
+static FILE *PhysLog()
+{
+    static FILE *f = [] {
+        auto path = std::getenv("AVL_PROBE_PHYS");
+        return path ? std::fopen(path, "w") : nullptr;
+    }();
+    return f;
+}
+
+// ZoneSystem.IsBlocked: any collider but terrain straight down from 2000 m up
+static bool IsBlocked(ZoneID zone, Vector3f p)
+{
+    p.y += 2000.f;
+    bool blocked = avledet::phys::World::instance().RaycastDown(p, 10000.f, avledet::phys::BLOCK).has_value();
+    if (auto f = PhysLog())
+        std::fprintf(f, "blk %d %d %.9g %.9g %d\n", zone.x, zone.y, p.x, p.z, blocked);
+    return blocked;
+}
+
+// ZoneSystem.GetStaticSolidHeight: first static_solid collider or terrain from 1000 m up
+static std::optional<avledet::phys::Hit> GetStaticSolidHeight(ZoneID zone, Vector3f p)
+{
+    p.y += 1000.f;
+    auto hit = avledet::phys::World::instance().RaycastDown(p, 2000.f, avledet::phys::STATIC_SOLID);
+    float h;
+    Vector3f n;
+    if (HeightmapManager::instance().GetHeightmap(ZoneManager::WorldToZonePos(p)).GetGroundData(p, h, n)
+        && h <= p.y && h >= p.y - 2000.f && (!hit || h > hit->m_y))
+        hit = avledet::phys::Hit {h, n};
+    if (auto f = PhysLog()) {
+        std::fprintf(f, "sol %d %d %.9g %.9g %.9g %d", zone.x, zone.y, p.x, p.y, p.z, hit.has_value());
+        if (hit)
+            std::fprintf(f, " %.9g %.9g %.9g %.9g", hit->m_y, hit->m_normal.x, hit->m_normal.y, hit->m_normal.z);
+        std::fprintf(f, "\n");
+    }
+    return hit;
+}
+
 void ZoneManager::PopulateFoliage(Heightmap &heightmap, std::vector<ClearArea> const &clearAreas)
 {
     auto &&zoneID = heightmap.get_zone();
@@ -656,8 +720,6 @@ void ZoneManager::PopulateFoliage(Heightmap &heightmap, std::vector<ClearArea> c
 
     //avledet::util::Biome biomes = GeoManager::instance().GetBiomes(center.x, center.z);
 
-    std::vector<ClearArea> placedAreas;
-
     for (auto const &zoneVegetation : m_foliage) {
         // This ultimately serves as a large precheck, assuming heightmap were being used (which it no longer seems good)
         if (!heightmap.HaveBiome(zoneVegetation->m_biome))
@@ -666,7 +728,10 @@ void ZoneManager::PopulateFoliage(Heightmap &heightmap, std::vector<ClearArea> c
         // TODO make unique per vegetation instance
         // this state will be the same for all same vegetation within a given zone, in a given world
         VUtils::Random::State state(seed + zoneID.x * 4271 + zoneID.y * 9187
-                                    + zoneVegetation->m_prefab.get().m_hash);
+                                    + zoneVegetation->m_seedHash);
+
+        if (auto f = PhysLog())
+            std::fprintf(f, "veg %d %d %s\n", zoneID.x, zoneID.y, zoneVegetation->m_seedName.c_str());
 
         std::int32_t num3 = 1;
         // max is used for both chance, and quantity in conjunction with min
@@ -717,9 +782,11 @@ void ZoneManager::PopulateFoliage(Heightmap &heightmap, std::vector<ClearArea> c
                 // z rotation in degrees
                 float rot_z = state.range(-zoneVegetation->m_randTilt, zoneVegetation->m_randTilt);
 
-                // Use a method similar to clear area with rectangular regions
-                //if (!zoneVegetation->m_blockCheck
-                //|| !IsBlocked(vector2)) // no unity   \_(^.^)_/
+                if (zoneVegetation->m_blockCheck && IsBlocked(zoneID, pos))
+                    continue;
+                // no ground there: biome None
+                if (OutsideProbeZone(pos))
+                    continue;
                 {
 
                     Vector3f normal;
@@ -733,20 +800,13 @@ void ZoneManager::PopulateFoliage(Heightmap &heightmap, std::vector<ClearArea> c
                         continue;
                     }
 
-                    // so, TODO
-                    //  make *some* or certain vegetation spawn really high up if a tall spire is in radius
-                    // Mistlands only
-                    //  A huge amount of mistlands are angled rock spires (not part of terrain),
-                    //  so vegetation spanws on top of these,
-                    // I do not have a way to implement this. The client, however does, which updating
-                    // objects with static physics every so often while nearby
-                    //
-                    //float y2 = 0;
-                    //Vector3f vector4;
-                    //if (zoneVegetation->m_snapToStaticSolid && GetStaticSolidHeight(vector2, y2, vector4)) {
-                    //    vector2.y = y2;
-                    //    vector3 = vector4;
-                    //}
+                    // Mistlands vegetation sits on the rock spires
+                    if (zoneVegetation->m_snapToStaticSolid) {
+                        if (auto hit = GetStaticSolidHeight(zoneID, pos)) {
+                            pos.y  = hit->m_y;
+                            normal = hit->m_normal;
+                        }
+                    }
 
                     float waterDiff = pos.y - WATER_LEVEL;
                     if (waterDiff < zoneVegetation->m_minAltitude
@@ -842,12 +902,7 @@ void ZoneManager::PopulateFoliage(Heightmap &heightmap, std::vector<ClearArea> c
                             }
                         }
 
-                        if (!InsideClearArea(clearAreas, pos)
-                            // Do NOT remove the below
-                            //  These are MY CUSTOM checks to compensate for lack of unity physics...
-                            && (zoneVegetation->m_radius == 0 || !zoneVegetation->m_blockCheck
-                                || !OverlapsClearArea(placedAreas, pos, zoneVegetation->m_radius)))// custom, only where vanilla IsBlocked runs
-                        {
+                        if (!InsideClearArea(clearAreas, pos)) {
 
                             if (zoneVegetation->m_snapToWater)
                                 pos.y = WATER_LEVEL;
@@ -871,10 +926,12 @@ void ZoneManager::PopulateFoliage(Heightmap &heightmap, std::vector<ClearArea> c
                             auto &&zdo = ZdoManager::instance().Instantiate(zoneVegetation->m_prefab, pos);
                             zdo->set_rotation(rotation);
 
-                            // basically any solid objects cannot be overlapped
-                            //  the exception to this rule is mist, swamp_beacon, silvervein... basically non-physical vegetation
-                            if (zoneVegetation->m_radius > 0)
-                                placedAreas.push_back({pos, zoneVegetation->m_radius});
+                            // its colliders block the next vegetation, SetLocalScale turns on the disabled ones
+                            for (auto &&c : zoneVegetation->m_colliders)
+                                avledet::phys::World::instance().Add(c, pos, rotation, scale);
+                            if (scale != zoneVegetation->m_prefab.get().m_localScale.x)
+                                for (auto &&c : zoneVegetation->m_rescaleColliders)
+                                    avledet::phys::World::instance().Add(c, pos, rotation, scale);
 
                             // vanilla SetLocalScale, synced only with m_syncInitialScale
                             if (scale != zoneVegetation->m_prefab.get().m_localScale.x
@@ -911,19 +968,6 @@ bool ZoneManager::InsideClearArea(std::vector<ClearArea> const &areas, Vector3f 
             && point.z < clearArea.m_center.z + clearArea.m_semiWidth) {
             return true;
         }
-    }
-    return false;
-}
-
-bool ZoneManager::OverlapsClearArea(std::vector<ClearArea> const &areas, Vector3f point, float radius)
-{
-    for (auto &&area : areas) {
-
-        float d  = VUtils::Math::sq_distance_to(point.x, point.z, area.m_center.x, area.m_center.z);
-        float rd = area.m_semiWidth + radius;
-
-        if (d < rd * rd)
-            return true;
     }
     return false;
 }
@@ -1363,8 +1407,12 @@ void ZoneManager::RegisterSpawned(ZDO &zdo, float scale)
 }
 
 void ZoneManager::RegisterVisuals(avledet::gen::Randoms const &randoms, avledet::gen::RollResult const &roll,
-                                  Vector3f pos, Quaternion rot)
+                                  std::vector<bool> const &active, Vector3f pos, Quaternion rot)
 {
+    // colliders go in at the instantiate pose, snapping later does not sync them (autoSyncTransforms off)
+    for (auto &&[owner, toggles, collider] : randoms.m_colliders)
+        if ((owner < 0 || active[owner]) && toggles.Live(roll))
+            avledet::phys::World::instance().Add(collider, pos, rot, 1);
     for (auto &&[mod, toggles] : randoms.m_terrainMods) {
         if (!toggles.Live(roll))
             continue;
@@ -1480,7 +1528,7 @@ void ZoneManager::GenerateFeature(Feature const &location, avledet::util::Hash s
         zdo->set_rotation(rot * view.m_rot);
         RegisterSpawned(*zdo);
     }
-    RegisterVisuals(location.m_randoms, roll, pos, rot);
+    RegisterVisuals(location.m_randoms, roll, active, pos, rot);
     SnappAll();
 
     // https://www.reddit.com/r/valheim/comments/xns70u/comment/ipv77ca/?utm_source=share&utm_medium=web2x&context=3
@@ -1550,6 +1598,8 @@ void ZoneManager::GetTerrainDelta(VUtils::Random::State &state, Vector3f center,
 float ZoneManager::GetGroundHeight(Vector3f p)
 {
     // vanilla raycasts the terrain mesh, misses return p.y
+    if (OutsideProbeZone(p))
+        return p.y;
     Vector3f normal;
     HeightmapManager::instance().GetHeightmap(WorldToZonePos(p)).GetGroundData(p, p.y, normal);
     return p.y;

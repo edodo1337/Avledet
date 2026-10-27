@@ -128,6 +128,13 @@ namespace avledet::gen {
         auto visualSnaps = reader.read<std::int32_t>();
         for (int i = 0; i < visualSnaps; i++)
             randoms.m_visualSnaps.push_back(readToggles());
+
+        auto colliders = reader.read<std::int32_t>();
+        for (int i = 0; i < colliders; i++) {
+            auto owner   = reader.read<std::int32_t>();
+            auto toggles = readToggles();
+            randoms.m_colliders.emplace_back(owner, std::move(toggles), phys::Collider::read(reader));
+        }
         return randoms;
     }
 

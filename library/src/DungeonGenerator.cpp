@@ -866,7 +866,7 @@ void DungeonGenerator::PlaceRoom(Room const &room, Vector3f pos, Quaternion rot)
         zdo->set_rotation(rot * view.m_rot);
         ZoneManager::instance().RegisterSpawned(*zdo);
     }
-    ZoneManager::instance().RegisterVisuals(room.m_randoms, roll, pos, rot);
+    ZoneManager::instance().RegisterVisuals(room.m_randoms, roll, active, pos, rot);
 
     // TODO this might be redundant for dummy 'dungeons' (plains villages shouldnt be considered dungeons)
     auto component2 = std::make_unique<RoomInstance>(room, pos, rot, 0, seed);
@@ -937,7 +937,7 @@ void DungeonGenerator::PlaceRoom(Room const &room, Vector3f pos, Quaternion rot,
             zdo->set_rotation(gRot);
             ZoneManager::instance().RegisterSpawned(*zdo);
         }
-        ZoneManager::instance().RegisterVisuals(room.m_randoms, roll, worldPos, worldRot);
+        ZoneManager::instance().RegisterVisuals(room.m_randoms, roll, active, worldPos, worldRot);
     }
 
     auto component2 = std::make_unique<RoomInstance>(room, pos, rot, fromConnection.m_placeOrder + 1, seed);

@@ -4,6 +4,7 @@
 #include "Prefab.h"
 #include "TerrainModifier.h"
 #include "Hashes.h"
+#include "Physics.h"
 #include "Quaternion.h"
 #include "Vector.h"
 #include "VUtilsRandom.h"
@@ -11,6 +12,7 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <tuple>
 #include <vector>
 
 // maybe create new ns
@@ -92,6 +94,8 @@ namespace avledet::gen {
         // TerrainModifiers and SnapToGround of the visuals (proxy or room instantiate)
         std::vector<std::pair<TerrainMod, Toggles>> m_terrainMods;
         std::vector<Toggles> m_visualSnaps;
+        // colliders for the vegetation raycasts: owner view (-1 visual), toggles, shape
+        std::vector<std::tuple<std::int32_t, Toggles, phys::Collider>> m_colliders;
 
         static Randoms parse(util::Reader &reader);
 

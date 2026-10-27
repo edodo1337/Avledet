@@ -194,6 +194,10 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
         float m_forestTresholdMax            = 1;
         std::string m_name;                   // ZoneVegetation.m_name, alt biomes block by it
         std::string m_altBiomeParent;         // only spawns in sectors with this alt biome
+        std::string m_seedName;               // GameObject name, can differ from the prefab ("SnowFirTree 2")
+        avledet::util::Hash m_seedHash{};
+        std::vector<avledet::phys::Collider> m_colliders;// block later vegetation once placed
+        std::vector<avledet::phys::Collider> m_rescaleColliders;// disabled in the prefab, on after a rescale
 
         Foliage(Prefab::Reference prefab) 
             : m_prefab(prefab) {}
@@ -309,7 +313,6 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
     Vector3f GetRandomPointInZone(VUtils::Random::State &state, ZoneID zone, float range);
     Vector3f GetRandomPointInRadius(VUtils::Random::State &state, Vector3f pos, float range);
     bool InsideClearArea(std::vector<ClearArea> const &areas, Vector3f pos);
-    bool OverlapsClearArea(std::vector<ClearArea> const &areas, Vector3f pos, float range);
 
     Feature const *GetFeature(std::string_view name);
 
@@ -339,9 +342,10 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
     void AwakeRandom(VUtils::Random::State &state, ZDO &zdo, bool randomDamage) const;
     // TerrainModifiers of a spawned networked prefab (rocks, roads) go live
     void RegisterSpawned(ZDO &zdo, float scale = 1);
-    // visual TerrainModifiers and SnapToGround of a location proxy or a room instantiate
-    void RegisterVisuals(avledet::gen::Randoms const &randoms, avledet::gen::RollResult const &roll, Vector3f pos,
-                         Quaternion rot);
+    // visual TerrainModifiers and SnapToGround of a location proxy or a room instantiate,
+    // and the colliders of the spawned views and visuals
+    void RegisterVisuals(avledet::gen::Randoms const &randoms, avledet::gen::RollResult const &roll,
+                         std::vector<bool> const &active, Vector3f pos, Quaternion rot);
     void AddSnapper(ZDO::reference zdo, float offset) { m_snappers.emplace_back(zdo, offset); }
     // vanilla SnapToGround.SnappAll: with any snapper pending, regenerate the poked heightmaps and
     // put the snappers on the ground
