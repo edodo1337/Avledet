@@ -93,6 +93,8 @@ target_link_libraries(avledet_library
         magic_enum::magic_enum
         Tracy::TracyClient
         $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static>
+        unofficial::brotli::brotlidec
+        unofficial::brotli::brotlienc
         quill::quill
         unordered_dense::unordered_dense
         # TODO, are we really using v3? c++23 ranges are released...

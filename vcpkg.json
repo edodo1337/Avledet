@@ -2,6 +2,7 @@
   "dependencies": [
     "abseil",
     "asio",
+    "brotli",
     "gtest",
     "gtl",
     "intrusive-shared-ptr",

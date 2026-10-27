@@ -47,8 +47,6 @@ class WorldManager : public avledet::util::IManager<WorldManager>
   private:
     std::unique_ptr<World> m_world;
     std::uint32_t m_saveNumber = 0;
-    // PersistentEventSystem data, passed through
-    avledet::util::Bytes m_persistentEvents;
 
     // a serialized save, written to disk off the main thread like vanilla's save thread
     struct SaveJob

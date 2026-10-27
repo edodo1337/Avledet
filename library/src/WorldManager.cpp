@@ -8,6 +8,7 @@
 #include "CompileSettings.h"
 #include "DataStream.h"
 #include "NetManager.h"
+#include "PersistentEventManager.h"
 #include "RandomEventManager.h"
 #include "VUtils.h"
 #include "VUtilsRandom.h"
@@ -19,10 +20,6 @@
 
 // ZoneSystem.m_locationVersion and Version.World of 1.0.20
 static_assert(VConstants::WORLD == 42);
-
-// PersistentEventSystem with no events: Brotli of {"list":[]}
-static avledet::util::Bytes const NO_PERSISTENT_EVENTS
-        = {0x0b, 0x05, (char) 0x80, '{', '"', 'l', 'i', 's', 't', '"', ':', '[', ']', '}', 0x03};
 
 World::World(std::string name, std::string seedName)
 {
@@ -139,7 +136,7 @@ void WorldManager::Load(std::filesystem::path const &dir, std::uint32_t save)
 #endif
     // vanilla reads this section only when 4 bytes are left
     if (db.size() - db.get_pos() >= 4)
-        m_persistentEvents = db.read<avledet::util::Bytes>();
+        PersistentEventManager::instance().Load(db.read<avledet::util::Bytes>());
 
     ZdoManager::instance().LoadChunks(dir, save);
 
@@ -174,7 +171,7 @@ void WorldManager::Save(std::filesystem::path const &dir)
     db.write(0.f);
     db.write(Vector3f::ZERO);
 #endif
-    db.write(m_persistentEvents.empty() ? NO_PERSISTENT_EVENTS : m_persistentEvents);
+    db.write(PersistentEventManager::instance().Save());
     job.m_files.emplace_back(main("db2"), db.release());
     job.m_files.emplace_back(main("fwl2"), m_world->SaveMeta());
     DataWriter ok;

@@ -156,6 +156,7 @@ find_package(range-v3 CONFIG REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(Tracy CONFIG REQUIRED)
 find_package(zstd CONFIG REQUIRED)
+find_package(unofficial-brotli CONFIG REQUIRED)
 find_package(quill CONFIG REQUIRED)
 find_package(magic_enum CONFIG REQUIRED)
 find_package(unordered_dense CONFIG REQUIRED) # https://github.com/martinus/unordered_dense?tab=readme-ov-file#21-installing-using-cmake

@@ -35,6 +35,7 @@
 #include "HeightmapBuilder.h"
 #include "ModManager.h"
 #include "NetManager.h"
+#include "PersistentEventManager.h"
 #include "RandomEventManager.h"
 #include "RouteManager.h"
 #include "VUtilsResource.h"
@@ -262,6 +263,7 @@ void Avledet::init()
 #endif
 
     ZoneManager::instance().PostPrefabInit();
+    PersistentEventManager::instance().Init();
 #if AVL_IS_ON(AVL_DUNGEON_GENERATION)
     DungeonManager::instance().post_prefab_init();
 #endif
@@ -392,6 +394,7 @@ bool Avledet::update()
     NetManager::instance().Update();
     ZdoManager::instance().Update();
     ZoneManager::instance().Update();
+    PersistentEventManager::instance().Update();
 #if AVL_IS_ON(AVL_RANDOM_EVENTS)
     RaidManager::instance().Update();
 #endif
