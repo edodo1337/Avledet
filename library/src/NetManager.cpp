@@ -34,32 +34,57 @@ static void RefuseNotAdmin(Peer::Ptr const &peer)
     peer->ConsoleMessage("You are not admin");
 }
 
+// vanilla InternalKick: by host ("Steam_" prefix allowed), then by player name
 Peer::Ptr NetManager::Kick(std::string_view user)
 {
-    auto &&peer = FindPeer(user);
-    if (peer) {
+    if (user.empty())
+        return nullptr;
+    auto id = user;
+    if (id.starts_with("Steam_"))
+        id.remove_prefix(6);
+    auto &&peer = FindPeerByHost(id);
+    if (!peer)
+        peer = FindPeerByName(user);
+    if (peer)
         peer->Kick();
-    }
-
     return peer;
 }
 
+// vanilla Save(saveOtherPlayerProfiles: true): clients save their characters with the world
+void NetManager::SaveWorld()
+{
+    for (auto &&peer : m_connectedPeers)
+        peer->Invoke("SavePlayerProfile");
+    WorldManager::instance().Save();
+}
+
+// vanilla InternalBan: a player online by name is banned by host; kicked by UpdateBanList
 Peer::Ptr NetManager::Ban(std::string_view user)
 {
-    auto &&peer = FindPeer(user);
-
-    if (peer) {
-        Avledet::instance().m_blacklist.insert(peer->m_socket->get_host_name());
-        peer->close(ConnectionStatus::ErrorBanned);
-    } else
-        Avledet::instance().m_blacklist.insert(user);
-
+    auto &&peer = FindPeerByName(user);
+    Avledet::instance().m_bannedList.Add(peer ? peer->m_socket->get_host_name() : std::string(user));
     return peer;
 }
 
 bool NetManager::Unban(std::string_view user)
 {
-    return Avledet::instance().m_blacklist.erase(user);
+    bool had = Avledet::instance().m_bannedList.Contains(user);
+    Avledet::instance().m_bannedList.Remove(user);
+    return had;
+}
+
+// vanilla UpdateBanList, every 5 s
+void NetManager::KickBanned()
+{
+    auto &&avl      = Avledet::instance();
+    bool permitOnly = !avl.m_permittedList.GetList().empty();
+    for (auto &&peer : m_onlinePeers) {
+        auto &&host = peer->m_socket->get_host_name();
+        if (permitOnly && !avl.m_permittedList.ContainsId(host))
+            peer->Kick();
+    }
+    for (auto &&user : avl.m_bannedList.GetList())
+        Kick(user);
 }
 
 void NetManager::SendDisconnect()
@@ -71,49 +96,112 @@ void NetManager::SendDisconnect()
     }
 }
 
+// vanilla GetUniqueDisplayName: "name#N" when several known users share a display name
+static std::string UniqueDisplayName(std::vector<std::array<std::string, 4>> const &history,
+                                     std::vector<std::array<std::string, 4>> const &players,
+                                     std::array<std::string, 4> const &user)
+{
+    bool found   = false;
+    int position = 1;
+    int matching = 0;
+    auto check   = [&](auto &&list) {
+        for (auto &&other : list) {
+            if (other[1] != user[1])
+                continue;
+            matching++;
+            if (!found) {
+                if (other[0] == user[0])
+                    found = true;
+                else
+                    position++;
+            }
+        }
+    };
+    check(history);
+    if (!found)
+        check(players);
+    return matching > 1 ? user[1] + "#" + std::to_string(position) : user[1];
+}
+
 void NetManager::SendPlayerList()
 {
-    if (!m_onlinePeers.empty()) {
-        if (!AVL_SCRIPT_EVENT(ScriptManager::Events::PlayerList))
-            return;
+    if (m_onlinePeers.empty())
+        return;
+    if (!AVL_SCRIPT_EVENT(ScriptManager::Events::PlayerList))
+        return;
 
-        DataWriter writer;
+    // CrossNetworkUserInfo: platform id, display name, server display name, playfab id
+    std::vector<std::array<std::string, 4>> users;
+    for (auto &&peer : m_onlinePeers) {
+        auto &&name = peer->m_syncData.find("platformDisplayName");
+        users.push_back({"Steam_" + peer->m_socket->get_host_name(),
+                         name != peer->m_syncData.end() ? name->second : "", "", peer->m_playfabId});
+    }
+    auto &&history = WorldManager::instance().GetWorld()->m_playerHistory;
+    for (auto &&user : users)
+        user[2] = UniqueDisplayName(history, users, user);
+    // UpdatePlayerHistory
+    for (auto &&user : users) {
+        auto it = std::find_if(history.begin(), history.end(), [&](auto &&h) { return h[0] == user[0]; });
+        if (it == history.end()) {
+            history.push_back(user);
+            m_historyUpdated = true;
+        } else if (*it != user) {
+            *it              = user;
+            m_historyUpdated = true;
+        }
+    }
 
-        writer.write(avledet::util::hashes::Rpc::S2C_UpdatePlayerList);// rpc hash
-
-        {
-            avledet::util::WriterScopedEncap scoped(writer);
-            writer.write((std::uint32_t) m_onlinePeers.size());
-
-            for (auto &&peer : m_onlinePeers) {
-                writer.write(peer->m_name);
-                writer.write(peer->m_characterID);
-                writer.write("Steam_" + peer->m_socket->get_host_name());
-                auto &&platformItr = peer->m_syncData.find("platformDisplayName");
-                auto &&platform    = platformItr != peer->m_syncData.end() ? platformItr->second : "";
-                writer.write(platform);           // ...?
-                auto forcedDisplayName = platform;//TODO the algo / usage is kinda weird / convoluted
-                writer.write(forcedDisplayName);  //TODO
-                writer.write(peer->m_playfabId);
-                writer.write(peer->IsMapVisible() || AVL_CONFIG.playerListForceVisible);
-                if (peer->IsMapVisible() || AVL_CONFIG.playerListForceVisible) {
-                    if (AVL_CONFIG.playerListSmoothUpdating >= 2s)
-                        writer.write(peer->m_pos);
-                    else {// quickly dynamic map
-                        auto &&zdo = peer->find_zdo();
-                        if (zdo)
-                            writer.write(zdo->get_position());
-                        else
-                            writer.write(peer->m_pos);
-                    }
+    DataWriter writer;
+    writer.write(avledet::util::hashes::Rpc::S2C_UpdatePlayerList);// rpc hash
+    {
+        avledet::util::WriterScopedEncap scoped(writer);
+        writer.write((std::uint32_t) m_onlinePeers.size());
+        for (std::size_t i = 0; i < m_onlinePeers.size(); i++) {
+            auto &&peer = m_onlinePeers[i];
+            writer.write(peer->m_name);
+            writer.write(peer->m_characterID);
+            for (auto &&field : users[i])
+                writer.write(field);
+            writer.write(peer->IsMapVisible() || AVL_CONFIG.playerListForceVisible);
+            if (peer->IsMapVisible() || AVL_CONFIG.playerListForceVisible) {
+                if (AVL_CONFIG.playerListSmoothUpdating >= 2s)
+                    writer.write(peer->m_pos);
+                else {// quickly dynamic map
+                    auto &&zdo = peer->find_zdo();
+                    writer.write(zdo ? zdo->get_position() : peer->m_pos);
                 }
             }
         }
-
-        for (auto &&peer : m_onlinePeers) {
-            peer->Send(writer.get_buf());
-        }
     }
+    for (auto &&peer : m_onlinePeers)
+        peer->Send(writer.get_buf());
+}
+
+void NetManager::SendHistoricalPlayerList()
+{
+    m_historyUpdated = false;
+    auto &&history   = WorldManager::instance().GetWorld()->m_playerHistory;
+    DataWriter writer;
+    writer.write((std::int32_t) history.size());
+    for (auto &&user : history)
+        for (auto &&field : user)
+            writer.write(field);
+    auto pkg = writer.release();
+    for (auto &&peer : m_onlinePeers)
+        peer->Invoke("HistoricalPlayerList", pkg);
+}
+
+void NetManager::SendAdminList()
+{
+    auto &&admins = Avledet::instance().m_adminList.GetList();
+    DataWriter writer;
+    writer.write((std::int32_t) admins.size());
+    for (auto &&admin : admins)
+        writer.write(admin);
+    auto pkg = writer.release();
+    for (auto &&peer : m_onlinePeers)
+        peer->Invoke("AdminList", pkg);
 }
 
 void NetManager::SendNetTime()
@@ -132,8 +220,8 @@ void NetManager::SendPeerInfo(Peer::Ptr peer)
         writer.write(Avledet::instance().ID());
         writer.write(std::string_view(VConstants::GAME));
         writer.write(VConstants::NETWORK);
-        writer.write(Vector3f::ZERO);      // dummy
-        writer.write(std::string_view(""));// dummy
+        writer.write(Vector3f(1000000, 0, 1000000));// dedicated server reference position (Game.FixedUpdate)
+        writer.write(std::string_view("Stranger"));   // its profile name
         writer.write(std::string_view(""));// playfab id, read and dropped by client
         writer.write(SimulationDistance::ORIGINAL.m_near);
         writer.write(SimulationDistance::ORIGINAL.m_far);
@@ -155,8 +243,6 @@ void NetManager::SendPeerInfo(Peer::Ptr peer)
 //void NetManager::OnNewClient(ISocket::Ptr socket, avledet::util::UserID uuid, const std::string &name, const Vector3f &pos) {
 void NetManager::OnPeerConnect(Peer::Ptr peer)
 {
-    peer->SetAdmin(Avledet::instance().m_admin.contains(peer->m_socket->get_host_name()));
-
     if (!AVL_SCRIPT_EVENT(ScriptManager::Events::Join, peer)) {
         return peer->Disconnect();
     }
@@ -217,91 +303,76 @@ void NetManager::OnPeerConnect(Peer::Ptr peer)
         //if (peer->m_characterID)
         //AVL_DISPATCH_WEBHOOK(peer->m_name + " has died");
 
-        //peer->m_characterID.set_id(characterID.get_id());
+        // ZDOID.None while respawning; the peer keeps its session id (m_uid)
         peer->m_characterID = characterID;
 
         LOG_NOTICE(AVL_LOGGER, "Got CharacterID from {} ({})", peer->m_name, characterID);
     });
 
-    peer->Register("Kick",
-                   [this](Peer::Ptr peer, std::string_view user) {
-                       // TODO maybe permissions tree in future?
-                       //  lua? ...
-                       if (!peer->IsAdmin())
-                           return RefuseNotAdmin(peer);
-
-                       LOG_NOTICE(AVL_LOGGER, "Admin {} kicks '{}'", peer->m_name, user);
-                       if (Kick(user)) {
-                           peer->ConsoleMessage("Kicked '" + std::string(user) + "'");
-                           AVL_DISPATCH_WEBHOOK(std::string(user) + " was kicked");
-                       } else {
-                           peer->ConsoleMessage("Player not found");
-                       }
-                   });
+    // admin RPCs answer with vanilla texts (ZNet.RPC_Kick and others)
+    peer->Register("Kick", [this](Peer::Ptr peer, std::string_view user) {
+        if (!peer->IsAdmin())
+            return RefuseNotAdmin(peer);
+        LOG_NOTICE(AVL_LOGGER, "Admin {} kicks '{}'", peer->m_name, user);
+        peer->ConsoleMessage("Kicking user " + std::string(user));
+        Kick(user);
+    });
 
     peer->Register("Ban", [this](Peer::Ptr peer, std::string_view user) {
         if (!peer->IsAdmin())
             return RefuseNotAdmin(peer);
-
-        LOG_NOTICE(AVL_LOGGER, "Admin {} bans '{}'", peer->m_name, user);
-        if (Ban(user)) {
-            peer->ConsoleMessage("Banned '" + std::string(user) + "'");
-            AVL_DISPATCH_WEBHOOK(std::string(user) + " was banned");
-        } else {
-            peer->ConsoleMessage("Player not found");
-        }
+        if (user.empty())
+            return;
+        auto &&banned = FindPeerByName(user);
+        auto host     = banned ? banned->m_socket->get_host_name() : std::string(user);
+        LOG_NOTICE(AVL_LOGGER, "Admin {} bans '{}'", peer->m_name, host);
+        peer->ConsoleMessage("Banning user " + host);
+        Ban(user);
     });
 
-    peer->Register("Unban",
-                   [this](Peer::Ptr peer, std::string_view user) {
-                       if (!peer->IsAdmin())
-                           return RefuseNotAdmin(peer);
-
-                       // devcommands requires an exact format...
-                       LOG_NOTICE(AVL_LOGGER, "Admin {} unbans '{}'", peer->m_name, user);
-                       Unban(user);
-
-                       peer->ConsoleMessage("Unbanning user " + std::string(user));
-                   });
-
-    peer->Register("Save", [](Peer::Ptr peer) {
+    peer->Register("Unban", [this](Peer::Ptr peer, std::string_view user) {
         if (!peer->IsAdmin())
             return RefuseNotAdmin(peer);
+        if (user.empty())
+            return;
+        LOG_NOTICE(AVL_LOGGER, "Admin {} unbans '{}'", peer->m_name, user);
+        peer->ConsoleMessage("Unbanning user " + std::string(user));
+        Unban(user);
+    });
 
+    peer->Register("Save", [this](Peer::Ptr peer) {
+        if (!peer->IsAdmin())
+            return RefuseNotAdmin(peer);
         LOG_NOTICE(AVL_LOGGER, "Admin {} saves the world", peer->m_name);
-        WorldManager::instance().Save();
-
-        peer->ConsoleMessage("Saved the world");
+        peer->ConsoleMessage("Saving..");
+        SaveWorld();
     });
 
     peer->Register("PrintBanned", [](Peer::Ptr peer) {
         if (!peer->IsAdmin())
             return RefuseNotAdmin(peer);
-
-        if (Avledet::instance().m_blacklist.empty())
-            peer->ConsoleMessage("Banned users: (none)");
-        else {
-            peer->ConsoleMessage("Banned users:");
-            for (auto &&banned : Avledet::instance().m_blacklist) {
-                peer->ConsoleMessage(banned);
-            }
-        }
-
-        if (!AVL_CONFIG.m_player_whitelist_on)
-            peer->ConsoleMessage("Whitelist is disabled");
-        else {
-            if (Avledet::instance().m_whitelist.empty())
-                peer->ConsoleMessage("Whitelisted users: (none)");
-            else {
-                peer->ConsoleMessage("Whitelisted users:");
-                for (auto &&banned : Avledet::instance().m_whitelist) {
-                    peer->ConsoleMessage(banned);
-                }
-            }
-        }
+        auto &&avl = Avledet::instance();
+        peer->ConsoleMessage("Banned users");
+        auto &&banned = avl.m_bannedList.GetList();
+        if (banned.empty())
+            peer->ConsoleMessage("-");
+        for (std::size_t i = 0; i < banned.size(); i++)
+            peer->ConsoleMessage(std::to_string(i) + ": " + banned[i]);
+        peer->ConsoleMessage("");
+        peer->ConsoleMessage("Permitted users");
+        auto &&permitted = avl.m_permittedList.GetList();
+        if (permitted.empty())
+            peer->ConsoleMessage("All");
+        for (std::size_t i = 0; i < permitted.size(); i++)
+            peer->ConsoleMessage(std::to_string(i) + ": " + permitted[i]);
     });
 
+    // vanilla order: PeerInfo, PlayerList, HistoricalPlayerList, AdminList, then ZDOs and routed RPCs
     SendPeerInfo(peer);
+    m_onlinePeers.push_back(peer);
+    SendPlayerList();
+    SendHistoricalPlayerList();
+    SendAdminList();
 
     ZdoManager::instance().OnNewPeer(peer);
     RouteManager::instance().OnNewPeer(peer);
@@ -321,7 +392,6 @@ void NetManager::OnPeerConnect(Peer::Ptr peer)
     // TODO remove this for debug only
     peer->SetGated(AVL_CONFIG.m_discord_player_restrict);
 
-    m_onlinePeers.push_back(peer);
     peer->m_joinTime = std::chrono::steady_clock::now();
     LOG_NOTICE(AVL_LOGGER, "{} joined ({}, uid {}), {} online", peer->m_name, peer->m_socket->get_host_name(),
                peer->GetUserID(), m_onlinePeers.size());
@@ -411,8 +481,13 @@ void NetManager::Update()
     if (AVL_CONFIG.playerListSmoothUpdating > 0s) {
         if (VUtils::run_periodic<struct periodic_peer_tablist>(AVL_CONFIG.playerListSmoothUpdating)) {
             SendPlayerList();
+            if (m_historyUpdated)
+                SendHistoricalPlayerList();
         }
     }
+
+    if (VUtils::run_periodic<struct periodic_ban_list>(5s))
+        KickBanned();
 
     // Send periodic pings (1s)
     if (VUtils::run_periodic<struct periodic_peer_keepalive>(1s)) {
@@ -492,11 +567,6 @@ void NetManager::OnPeerQuit(Peer::Ptr peer)
         avledet::replay::ReplayManager::instance().on_peer_quit(peer);
     }
 
-    if (peer->IsAdmin()) {
-        Avledet::instance().m_admin.insert(peer->m_socket->get_host_name());
-    } else {
-        Avledet::instance().m_admin.erase(peer->m_socket->get_host_name());
-    }
 }
 
 void NetManager::OnPeerDisconnect(Peer::Ptr peer)
@@ -525,11 +595,32 @@ void NetManager::Uninit()
     m_acceptor->stop();
 }
 
+// C# Encoding.ASCII.GetBytes on a UTF-8 string: one '?' per non-ASCII character
+static std::string AsciiChars(std::string_view utf8)
+{
+    std::string out;
+    for (std::size_t i = 0; i < utf8.size();) {
+        auto c = static_cast<std::uint8_t>(utf8[i]);
+        if (c < 0x80) {
+            out += char(c);
+            i++;
+            continue;
+        }
+        out += '?';
+        i += c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : 2;
+    }
+    return out;
+}
+
 void NetManager::OnConfigLoad(bool reloading)
 {
-    (void) reloading;
-
     bool hasPassword = !AVL_CONFIG.m_server_password.empty();
+
+    // vanilla refuses to start a public server with a weak password (FejdStartup.IsPublicPasswordValid)
+    auto &&pw = AVL_CONFIG.m_server_password;
+    if (!reloading && AVL_CONFIG.m_server_public
+        && (pw.size() < 5 || AVL_CONFIG.m_world_name.contains(pw) || AVL_CONFIG.m_world_seed.contains(pw)))
+        throw std::runtime_error("public server needs a password of 5+ characters, not part of the world name or seed");
 
     if (hasPassword) {
         m_passwordSalt = VUtils::Random::GenerateAlphaNum(16);
@@ -537,7 +628,7 @@ void NetManager::OnConfigLoad(bool reloading)
         // Hash a salted password
         //VUtils::md5(merge.c_str(), merge.size(), reinterpret_cast<std::uint8_t*>(m_passwordHash.data()));
 
-        auto s         = avledet::crypto::md5(AVL_CONFIG.m_server_password + m_passwordSalt);
+        auto s         = avledet::crypto::md5(AsciiChars(AVL_CONFIG.m_server_password) + m_passwordSalt);
         m_passwordHash = avledet::lexicon::CSU::ascii(std::string_view(s));
     } else {
         m_passwordSalt.clear();

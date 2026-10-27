@@ -75,7 +75,6 @@ public:
     std::string m_server_address {};
     bool m_server_tcp {};
 
-    bool m_player_whitelist_on {};
     std::uint32_t m_player_limit {};
     bool m_player_auth {};
     std::chrono::seconds m_player_timeout {};

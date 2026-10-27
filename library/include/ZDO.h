@@ -96,7 +96,7 @@ class ZDO
     /*
     * 36 bytes total:
     */
-    ZDOID m_id;                                         // 4 bytes
+    ZDOID m_id;                                         // 16 bytes
     mutable Vector3f m_pos;                             // 12 bytes
     mutable Rev m_rev;                                  // 4 bytes
     mutable Vector3f m_rotation;                        // 12 bytes

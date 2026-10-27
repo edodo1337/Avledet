@@ -60,7 +60,11 @@ class WorldManager : public avledet::util::IManager<WorldManager>
     };
     std::thread m_saveThread;
     std::atomic<bool> m_saveOk;
+    std::atomic<bool> m_saveDone;
     std::uint32_t m_savingNumber = 0;
+    std::chrono::steady_clock::time_point m_lastSave = std::chrono::steady_clock::now();
+    float m_saveSerializeSeconds {};
+    std::chrono::steady_clock::time_point m_saveThreadStart;
 
     static bool WriteSave(SaveJob const &job);
 
@@ -79,6 +83,11 @@ class WorldManager : public avledet::util::IManager<WorldManager>
     void Save();
     // waits for the background write
     void WaitSave();
+    // tells everyone when a background write is done (ZNet.PrintWorldSaveMessage)
+    void Update();
+
+    // time since the last save started (Game.m_saveTimer)
+    std::chrono::steady_clock::duration SinceSave() const { return std::chrono::steady_clock::now() - m_lastSave; }
 
     void PostZoneInit();
 

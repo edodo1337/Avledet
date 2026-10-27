@@ -23,6 +23,7 @@ class NetManager : public avledet::util::IManager<NetManager>
     std::vector<Peer::Ptr>
             m_connectedPeers;// TODO condense this down to 1 list, use m_online BOOL instead / flag
     std::vector<Peer::Ptr> m_onlinePeers;// TODO remove this (use above^)
+    bool m_historyUpdated {};
     std::list<std::pair<std::string, std::pair<std::chrono::nanoseconds, std::chrono::nanoseconds>>>
             m_sortedSessions;
     std::unique_ptr<IAcceptor> m_acceptor;
@@ -63,6 +64,11 @@ class NetManager : public avledet::util::IManager<NetManager>
 
     // Unban a player by identifier
     bool Unban(std::string_view user);
+
+    void KickBanned();
+    void SendHistoricalPlayerList();
+    void SendAdminList();
+    void SaveWorld();
 
     auto const &GetPeers()
     {

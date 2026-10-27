@@ -176,12 +176,12 @@ bool RaidManager::CheckGlobalKeys(Event const &e)
 {
     if (AVL_CONFIG.m_raids_require_keys) {
         for (auto &&key : e.m_presentGlobalKeys) {
-            if (!ZoneManager::instance().has_global_key(key))
+            if (!ZoneManager::instance().GetGlobalKey(key))
                 return false;
         }
 
         for (auto &&key : e.m_absentGlobalKeys) {
-            if (ZoneManager::instance().has_global_key(key))
+            if (ZoneManager::instance().GetGlobalKey(key))
                 return false;
         }
     }

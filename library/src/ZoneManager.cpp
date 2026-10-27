@@ -20,6 +20,7 @@
 #include <numeric>
 #include <vector>
 #include "ZoneManager.h"
+#include "WorldManager.h"
 #include "AltBiomes.h"
 #include <fstream>
 #include <optional>
@@ -225,6 +226,8 @@ void ZoneManager::PostPrefabInit()
         for (auto &&[name, seconds] : lifetimes.items())
             m_lifetimes[avledet::util::get_stable_hash(name)] = std::chrono::duration<float>(seconds.get<float>());
 
+        LoadLoot();
+
         std::ifstream modsIn("prefab_terrainmods.json");
         if (!modsIn)
             throw std::runtime_error("prefab_terrainmods.json missing (dumped from the 1.0 server)");
@@ -265,25 +268,38 @@ void ZoneManager::PostPrefabInit()
     RouteManager::instance().Register("SetGlobalKey",
                              [this](Peer::Ptr peer, std::string_view name) {
                                  (void) peer;
-                                 // TODO limit keys based on peer and the creature killed
-                                 //  have this as a compiler macro
-                                 if (m_globalKeys.insert(name).second)
-                                     SendGlobalKeys();// Notify clients
+                                 // vanilla checks the raw name, then adds it lowercased
+                                 if (!m_globalKeys.contains(name)) {
+                                     GlobalKeyAdd(name);
+                                     SendGlobalKeys();
+                                 }
                              });
 
     RouteManager::instance().Register("RemoveGlobalKey",
                              [this](Peer::Ptr peer, std::string_view name) {
                                  (void) peer;
-                                 // TODO limit keys based on peer and the creature killed
-                                 if (m_globalKeys.erase(name))
-                                     SendGlobalKeys();// Notify clients
+                                 if (GlobalKeyRemove(name))
+                                     SendGlobalKeys();
                              });
 
     RouteManager::instance().Register("RPC_DiscoverClosestLocation",
                              [this](Peer::Ptr peer, std::string_view locationName, Vector3f point,
                                     std::string_view pinName, int pinType, bool showMap, bool discoverAll) {
-                                    // TODO discoverAll used by certain vesvigirs (which ones?)
 #if AVL_IS_ON(AVL_ZONE_GENERATION)
+                                 // Vegvisir with m_discoverAll: one pin per instance
+                                 if (discoverAll) {
+                                     int found = 0;
+                                     for (auto &&[zone, instance] : m_generatedFeatures) {
+                                         if (instance->m_feature.get().m_name != locationName)
+                                             continue;
+                                         RouteManager::instance().Invoke(peer->GetUserID(),
+                                                                avledet::util::hashes::Routed::S2C_ResponseIcon,
+                                                                pinName, pinType, instance->m_pos, showMap);
+                                         found++;
+                                     }
+                                     LOG_INFO(AVL_LOGGER, "Found {} locations of type '{}'", found, locationName);
+                                     return;
+                                 }
                                  if (auto &&instance = find_nearest_feature(locationName, point)) {
                                      LOG_INFO(AVL_LOGGER, "Found location: '{}'", locationName);
                                      RouteManager::instance().Invoke(peer->GetUserID(),
@@ -428,12 +444,67 @@ static bool IsServerOption(std::string_view key)
     return false;
 }
 
+static std::string Lower(std::string_view s)
+{
+    std::string out(s);
+    for (auto &&c : out)
+        c = (char) std::tolower((unsigned char) c);
+    return out;
+}
+
+// ZoneSystem.GetKeyValue: "name value", the name lowercased
+static std::string KeyName(std::string_view key, std::string &value)
+{
+    auto space = key.find(' ');
+    value      = space != std::string_view::npos && space > 0 ? std::string(key.substr(space + 1)) : "";
+    return Lower(space != std::string_view::npos && space > 0 ? key.substr(0, space) : key);
+}
+
+static std::string KeyLine(std::string const &name, std::string const &value)
+{
+    return value.empty() ? name : name + " " + value;
+}
+
+// ZoneSystem.GlobalKeyAdd: one entry per key name, server options also go to the world's starting keys
+void ZoneManager::GlobalKeyAdd(std::string_view keyStr, bool saveServerOption)
+{
+    auto lower = Lower(keyStr);
+    std::string value;
+    auto name    = KeyName(lower, value);
+    auto &&world = WorldManager::instance().GetWorld();
+    bool save    = saveServerOption && world && IsServerOption(name);
+    auto &&starting = world ? &world->m_startingGlobalKeys : nullptr;
+    if (auto it = m_globalKeysValues.find(name); it != m_globalKeysValues.end()) {
+        auto old = KeyLine(name, it->second);
+        m_globalKeys.erase(old);
+        if (save)
+            std::erase(*starting, old);
+    }
+    m_globalKeys.insert(KeyLine(name, value));
+    m_globalKeysValues[name] = value;
+    if (save)
+        starting->push_back(lower);
+}
+
+bool ZoneManager::GlobalKeyRemove(std::string_view keyStr, bool saveServerOption)
+{
+    std::string value;
+    auto name = KeyName(keyStr, value);
+    auto it   = m_globalKeysValues.find(name);
+    if (it == m_globalKeysValues.end())
+        return false;
+    auto line    = KeyLine(name, it->second);
+    auto &&world = WorldManager::instance().GetWorld();
+    if (saveServerOption && world && IsServerOption(name))
+        std::erase(world->m_startingGlobalKeys, line);
+    m_globalKeys.erase(line);
+    m_globalKeysValues.erase(it);
+    return true;
+}
+
 bool ZoneManager::GetGlobalKey(std::string_view name) const
 {
-    auto lower = [](char c) { return (char) std::tolower((unsigned char) c); };
-    return std::ranges::any_of(m_globalKeys, [&](std::string_view key) {
-        return std::ranges::equal(key.substr(0, key.find(' ')), name, {}, lower, lower);
-    });
+    return m_globalKeysValues.contains(Lower(name));
 }
 
 // public
@@ -485,7 +556,7 @@ void ZoneManager::Save(DataWriter &out)
 void ZoneManager::Load(DataReader &in, std::vector<std::string> const &startingKeys)
 {
     for (auto &&key : startingKeys)
-        m_globalKeys.insert(key);
+        GlobalKeyAdd(key, false);
 
     auto packed = in.read<avledet::util::Bytes>();
     auto bytes  = Inflater::Gz().Decompress(packed.data(), (std::uint32_t) packed.size());
@@ -503,7 +574,7 @@ void ZoneManager::Load(DataReader &in, std::vector<std::string> const &startingK
     auto locationVersion = pkg.read<std::int32_t>();
     auto keys            = pkg.read<std::int32_t>();
     for (int i = 0; i < keys; i++)
-        m_globalKeys.insert(pkg.read<std::string>());
+        GlobalKeyAdd(pkg.read<std::string>());
     bool locationsGenerated = pkg.read<bool>();
     if (!locationsGenerated || locationVersion != VConstants::LOCATION)
         LOG_WARNING(AVL_LOGGER, "Locations of version {} (generated: {}), not regenerated here", locationVersion,
@@ -635,8 +706,8 @@ bool ZoneManager::TryPollGenerateZone(ZoneID zone)
     return false;
 }
 
-// probe zones mode (AVL_PROBE_ZONES): a zone generates alone as in tools/worldgen-probe,
-// the terrain of other zones is not loaded
+// The dedicated server spawns one ghost zone per update and destroys its root in the same frame
+// (ZoneSystem.CreateGhostZones), so a zone generates alone: no terrain of other zones to hit
 static std::optional<ZoneID> s_probeZone;
 
 static bool OutsideProbeZone(Vector3f p)
@@ -648,8 +719,7 @@ void ZoneManager::PopulateZone(Heightmap &heightmap)
 {
     ZoneScoped;
 
-    if (std::getenv("AVL_PROBE_ZONES"))
-        s_probeZone = heightmap.get_zone();
+    s_probeZone = heightmap.get_zone();
     LOG_BACKTRACE(AVL_LOGGER, "generating zone {}", heightmap.get_zone());
 
     //#if AVL_IS_ON(AVL_ZONE_GENERATION)
@@ -669,7 +739,7 @@ void ZoneManager::PopulateZone(Heightmap &heightmap)
 
     // vanilla regenerates the heightmaps poked by new modifiers (rocks) in a later LateUpdate
     HeightmapManager::instance().ForceGenerateAll();
-    //#endif // AVL_OPTION_ENABLE_ZONE_GENERATION
+    s_probeZone.reset();
 }
 
 void ZoneManager::PopulateZone(ZoneID zone)
@@ -1406,22 +1476,271 @@ void ZoneManager::RemoveUngeneratedFeatures(Feature const &feature)
 }
 
 // private
+void ZoneManager::LoadLoot()
+{
+    std::ifstream in("loot.json");
+    if (!in)
+        throw std::runtime_error("loot.json missing (dumped from the 1.0 server)");
+    auto j    = nlohmann::json::parse(in);
+    auto hash = [](std::string const &s) { return avledet::util::get_stable_hash(s); };
+
+    for (auto &&[name, v] : j.at("items").items())
+        m_items[name] = ItemDef {hash(name), v[0], v[1], v[2], v[3], v[4], v[5]};
+    auto item = [&](std::string const &name) -> ItemDef const * {
+        auto it = m_items.find(name);
+        return it == m_items.end() ? nullptr : &it->second;
+    };
+    for (auto &&[name, v] : j.at("steps").items()) {
+        auto &&steps = m_awakeSteps[hash(name)];
+        for (int mode = 0; mode < 2; mode++) {
+            for (auto &&e : v[mode][0]) {
+                auto kind = e[0].get<std::string>();
+                steps.m_steps[mode].push_back(
+                        {kind == "droptable" ? AwakeStep::DROPTABLE
+                         : kind == "pickable" ? AwakeStep::PICKABLE
+                                              : AwakeStep::WEARNTEAR,
+                         e[1], e[2], e[3]});
+            }
+            steps.m_tail[mode] = v[mode][1];
+        }
+    }
+    for (auto &&[name, v] : j.at("containers").items()) {
+        auto &&list = m_containers[hash(name)];
+        for (auto &&c : v) {
+            ContainerDef def {c.at("w"), c.at("h"), c.at("chance"), c.at("min"), c.at("max"), c.at("oneOfEach"), {}};
+            for (auto &&d : c.at("drops"))
+                def.m_drops.push_back({item(d[0]), d[1], d[2], d[3], d[4]});
+            list.push_back(std::move(def));
+        }
+    }
+    for (auto &&[name, v] : j.at("pickables").items()) {
+        auto &&list = m_pickables[hash(name)];
+        for (auto &&p : v) {
+            PickableDef def {p.at("fixed"), {}};
+            for (auto &&i : p.at("items"))
+                def.m_items.emplace_back(item(i[0]), i[1], i[2]);
+            list.push_back(std::move(def));
+        }
+    }
+    for (auto &&[name, fuel] : j.at("startFuel").items())
+        m_startFuel[hash(name)] = fuel;
+    for (auto &&name : j.at("enabledByDefault"))
+        m_enabledByDefault.insert(hash(name));
+    for (auto &&name : j.at("spawnTime"))
+        m_spawnTime.insert(hash(name));
+    for (auto &&name : j.at("plantTime"))
+        m_plantTime.insert(hash(name));
+    m_nonScaledDropTypes = j.at("nonScaledDropTypes").get<std::vector<int>>();
+    LOG_INFO(AVL_LOGGER, "Loaded loot: {} containers, {} random pickables, {} items", m_containers.size(),
+             m_pickables.size(), m_items.size());
+}
+
+// world modifier key as a scalar ("resourcerate 200" -> 2), Game.trySetScalarKey
+float ZoneManager::ScalarKey(std::string_view key) const
+{
+    auto it = m_globalKeysValues.find(std::string(key));
+    if (it == m_globalKeysValues.end())
+        return 1;
+    try {
+        return std::stof(it->second) / 100.f;
+    } catch (...) {
+        return 1;
+    }
+}
+
+// Game.ScaleDrops(ItemData, randomMin, randomMax): Random.Range, scaled by the ResourceRate modifier
+int ZoneManager::ScaleDrops(VUtils::Random::State &state, ItemDef const &item, int min, int max) const
+{
+    float rate = ScalarKey("resourcerate");
+    if (rate != 1.f && std::ranges::find(m_nonScaledDropTypes, item.m_type) == m_nonScaledDropTypes.end()) {
+        int n = (int) std::max(1.f, std::nearbyint(state.range((float) min, (float) max) * rate));
+        return std::min(n, item.m_maxStack > 1 ? item.m_maxStack : 10000);
+    }
+    return state.range(min, max);
+}
+
+// Container.AddDefaultItems: DropTable.GetDropListItems into a new Inventory, saved to "items"
+void ZoneManager::FillContainer(VUtils::Random::State &state, ZDO &zdo, ContainerDef const &c) const
+{
+    struct Item
+    {
+        ItemDef const *m_def;
+        int m_stack;
+        int m_x, m_y;
+    };
+    std::vector<Item> inventory;
+    int worldLevel = 0;
+    if (auto it = m_globalKeysValues.find("worldlevel"); it != m_globalKeysValues.end())
+        worldLevel = std::clamp(std::atoi(it->second.c_str()), 0, 10);
+
+    auto emptySlot = [&](bool topFirst) -> std::pair<int, int> {
+        auto taken = [&](int x, int y) {
+            return std::ranges::any_of(inventory, [&](Item const &i) { return i.m_x == x && i.m_y == y; });
+        };
+        for (int n = 0; n < c.m_height; n++) {
+            int y = topFirst ? n : c.m_height - 1 - n;
+            for (int x = 0; x < c.m_width; x++)
+                if (!taken(x, y))
+                    return {x, y};
+        }
+        return {-1, -1};
+    };
+    // Inventory.AddItem(ItemData)
+    auto add = [&](ItemDef const &def, int stack) {
+        // TopFirst: weapons, tools, shields, utility, misc and trinkets fill from the top row
+        int t         = def.m_type;
+        bool topFirst = t == 3 || t == 4 || t == 14 || t == 15 || t == 22 || t == 19 || t == 5 || t == 18 || t == 16
+                     || t == 24;
+        if (def.m_maxStack > 1) {
+            for (int i = 0; i < stack; i++) {
+                auto free = std::ranges::find_if(inventory, [&](Item const &item) {
+                    return item.m_def->m_name == def.m_name && item.m_def->m_quality == def.m_quality
+                        && item.m_stack < item.m_def->m_maxStack;
+                });
+                if (free != inventory.end()) {
+                    free->m_stack++;
+                    continue;
+                }
+                if (auto [x, y] = emptySlot(topFirst); x >= 0)
+                    inventory.push_back({&def, stack - i, x, y});
+                break;
+            }
+        } else if (auto [x, y] = emptySlot(topFirst); x >= 0)
+            inventory.push_back({&def, stack, x, y});
+    };
+
+    // DropTable.GetDropListItems
+    std::vector<std::pair<ItemDef const *, int>> drops;
+    if (!c.m_drops.empty() && state.next_float() <= c.m_chance) {
+        auto table  = c.m_drops;
+        float total = 0;
+        for (auto &&d : table)
+            total += d.m_weight;
+        auto toList = [&](DropDef const &d) {
+            int min   = std::max(1, d.m_min);
+            int max   = std::min(d.m_item->m_maxStack, d.m_max);
+            int stack = d.m_dontScale ? state.range(min, max + 1) : ScaleDrops(state, *d.m_item, min, max + 1);
+            drops.emplace_back(d.m_item, stack);
+        };
+        int count = state.range(c.m_min, c.m_max + 1);
+        for (int i = 0; i < count; i++) {
+            float r    = state.range(0.f, total);
+            bool found = false;
+            float sum  = 0;
+            for (auto it = table.begin(); it != table.end(); ++it) {
+                sum += it->m_weight;
+                if (r <= sum) {
+                    found = true;
+                    toList(*it);
+                    if (c.m_oneOfEach) {
+                        total -= it->m_weight;
+                        table.erase(it);
+                    }
+                    break;
+                }
+            }
+            if (!found && !table.empty())
+                toList(table[0]);
+        }
+    }
+    for (auto &&[def, stack] : drops)
+        if (def)
+            add(*def, stack);
+
+    // Inventory.Save, ItemData.Save
+    DataWriter pkg;
+    pkg.write((std::int32_t) 110);
+    pkg.write((std::uint16_t) inventory.size());
+    for (auto &&i : inventory) {
+        auto &&d  = *i.m_def;
+        int flags = (d.m_quality != 1 ? 4 : 0) | (i.m_stack != 1 ? 8 : 0) | (d.m_variant != 0 ? 16 : 0) | 64;
+        pkg.write((std::int32_t) (d.m_durability * 100.f));
+        pkg.write((std::uint8_t) i.m_x);
+        pkg.write((std::uint8_t) i.m_y);
+        pkg.write((std::uint8_t) worldLevel);
+        pkg.write((std::uint8_t) flags);
+        if (flags & 4)
+            pkg.write((std::uint16_t) d.m_quality);
+        if (flags & 8)
+            pkg.write((std::uint16_t) i.m_stack);
+        if (flags & 16)
+            pkg.write((std::int32_t) d.m_variant);
+        pkg.write(d.m_prefab);
+        pkg.write((std::uint8_t) 0);// not cheated
+    }
+    zdo.set(avledet::util::get_stable_hash("items"), pkg.release());
+    zdo.set(avledet::util::get_stable_hash("addedDefaultItems"), true);
+}
+
+// PickableItem.SetupRandomPrefab
+void ZoneManager::PickItem(VUtils::Random::State &state, ZDO &zdo, PickableDef const &p) const
+{
+    if (p.m_fixed || p.m_items.empty())
+        return;
+    auto &&[item, min, max] = p.m_items[state.range(0, (int) p.m_items.size())];
+    if (!item)
+        return;
+    int stack = ScaleDrops(state, *item, min, max + 1);
+    zdo.set(avledet::util::get_stable_hash("itemPrefab"), (std::int32_t) item->m_prefab);
+    zdo.set(avledet::util::get_stable_hash("itemStack"), (std::int32_t) stack);
+}
+
 void ZoneManager::AwakeRandom(VUtils::Random::State &state, ZDO &zdo, bool randomDamage) const
 {
-    auto itr = m_awakeDraws.find(zdo.get_prefab().get().m_hash);
+    auto prefab = zdo.get_prefab().get().m_hash;
+
+    // other Awake writes of a new owned ZDO, no random
+    auto ticks = (std::int64_t) (Avledet::instance().GetWorldTime() * 1000.0 * 10000.0);
+    if (auto fuel = m_startFuel.find(prefab); fuel != m_startFuel.end())
+        zdo.set(avledet::util::get_stable_hash("fuel"), fuel->second);
+    if (m_enabledByDefault.contains(prefab))
+        zdo.set(avledet::util::get_stable_hash("enabled"), true);
+    if (m_spawnTime.contains(prefab))
+        zdo.set(avledet::util::get_stable_hash("spawntime"), ticks);
+    if (m_plantTime.contains(prefab)) {
+        zdo.set(avledet::util::get_stable_hash("seed"),
+                (std::int32_t) (zdo.get_id().get_id() + zdo.get_id().get_user_id()));
+        zdo.set(avledet::util::get_stable_hash("plantTime"), ticks);
+    }
+
+    auto skip = [&](int n) {
+        for (int i = 0; i < n; i++)
+            state.next_float();
+    };
+    float health = 0;
+    if (auto d = m_awakeDraws.find(prefab); d != m_awakeDraws.end())
+        health = d->second.m_health;
+    if (auto st = m_awakeSteps.find(prefab); st != m_awakeSteps.end()) {
+        int mode = randomDamage ? 1 : 0;
+        for (auto &&e : st->second.m_steps[mode]) {
+            skip(e.m_gap);
+            switch (e.m_kind) {
+                case AwakeStep::DROPTABLE:
+                    FillContainer(state, zdo, m_containers.at(prefab).at(e.m_index));
+                    break;
+                case AwakeStep::PICKABLE:
+                    PickItem(state, zdo, m_pickables.at(prefab).at(e.m_index));
+                    break;
+                case AwakeStep::WEARNTEAR:
+                    // the initial damage is its first draw
+                    if (randomDamage && health > 0) {
+                        zdo.set(avledet::util::hashes::ZDO::WearNTear::HEALTH, state.range(0.1f * health, health * 0.6f));
+                        skip(e.m_inner - 1);
+                    } else
+                        skip(e.m_inner);
+                    break;
+            }
+        }
+        skip(st->second.m_tail[mode]);
+        return;
+    }
+
+    auto itr = m_awakeDraws.find(prefab);
     if (itr == m_awakeDraws.end())
         return;
 
-    auto &&d = itr->second;
-    int skip = randomDamage ? d.m_drawsDamage : d.m_draws;
-    if (randomDamage && d.m_damageIndex >= 0) {
-        for (int i = 0; i < d.m_damageIndex; i++)
-            state.next_float();
-        zdo.set(avledet::util::hashes::ZDO::WearNTear::HEALTH, state.range(0.1f * d.m_health, d.m_health * 0.6f));
-        skip -= d.m_damageIndex + 1;
-    }
-    for (int i = 0; i < skip; i++)
-        state.next_float();
+    // no Container, PickableItem or WearNTear: a fixed number of draws
+    skip(randomDamage ? itr->second.m_drawsDamage : itr->second.m_draws);
 }
 
 void ZoneManager::RegisterSpawned(ZDO &zdo, float scale)
@@ -1441,12 +1760,14 @@ void ZoneManager::RegisterSpawned(ZDO &zdo, float scale)
 }
 
 void ZoneManager::RegisterVisuals(avledet::gen::Randoms const &randoms, avledet::gen::RollResult const &roll,
-                                  std::vector<bool> const &active, Vector3f pos, Quaternion rot)
+                                  std::vector<bool> const &active, Vector3f pos, Quaternion rot, bool visuals)
 {
     // colliders go in at the instantiate pose, snapping later does not sync them (autoSyncTransforms off)
     for (auto &&[owner, toggles, collider] : randoms.m_colliders)
-        if ((owner < 0 || active[owner]) && toggles.Live(roll))
+        if ((owner < 0 ? visuals : (bool) active[owner]) && toggles.Live(roll))
             avledet::phys::World::instance().Add(collider, pos, rot, 1);
+    if (!visuals)
+        return;
     for (auto &&[mod, toggles] : randoms.m_terrainMods) {
         if (!toggles.Live(roll))
             continue;
@@ -1560,14 +1881,16 @@ void ZoneManager::GenerateFeature(Feature const &location, avledet::util::Hash s
         }
     }
 
-    // the proxy spawns the location visuals: inactive views turned on there get a ZDO in Awake,
-    // its TerrainModifiers go live, and its SpawnLocation ends with SnappAll
+    // RandomSpawn.Randomize turned these m_OffObject views on before the ZNetView loop, so SpawnLocation
+    // creates them too
     for (auto &&view : offProxies) {
         auto &&zdo = ZdoManager::instance().Instantiate(view.m_prefabHash, pos + rot * view.m_pos);
         zdo->set_rotation(rot * view.m_rot);
         RegisterSpawned(*zdo);
     }
-    RegisterVisuals(location.m_randoms, roll, active, pos, rot);
+    // The dedicated server spawns zones in SpawnMode.Ghost: CreateLocationProxy does not spawn the
+    // location visuals (spawnNow only in Full), only the networked parts are there
+    RegisterVisuals(location.m_randoms, roll, active, pos, rot, false);
     SnappAll();
 
     // https://www.reddit.com/r/valheim/comments/xns70u/comment/ipv77ca/?utm_source=share&utm_medium=web2x&context=3

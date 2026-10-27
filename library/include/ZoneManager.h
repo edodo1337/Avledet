@@ -5,6 +5,7 @@
 #include <functional>
 #include <list>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "DataStream.h"
@@ -286,6 +287,7 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
 
     // Game-state global keys
     avledet::util::Set<std::string, ankerl::unordered_dense::string_hash, std::equal_to<>> m_globalKeys;
+    avledet::util::Map<std::string, std::string> m_globalKeysValues;// key name -> value
 
   private:
     void SendGlobalKeys();
@@ -347,8 +349,9 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
     void RegisterSpawned(ZDO &zdo, float scale = 1);
     // visual TerrainModifiers and SnapToGround of a location proxy or a room instantiate,
     // and the colliders of the spawned views and visuals
+    // visuals: the non-networked children too (a dungeon room; a ghost location has none)
     void RegisterVisuals(avledet::gen::Randoms const &randoms, avledet::gen::RollResult const &roll,
-                         std::vector<bool> const &active, Vector3f pos, Quaternion rot);
+                         std::vector<bool> const &active, Vector3f pos, Quaternion rot, bool visuals = true);
     void AddSnapper(ZDO::reference zdo, float offset) { m_snappers.emplace_back(zdo, offset); }
     // vanilla SnapToGround.SnappAll: with any snapper pending, regenerate the poked heightmaps and
     // put the snappers on the ground
@@ -364,6 +367,67 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
     };
     std::unordered_map<avledet::util::Hash, AwakeDraws> m_awakeDraws;
     std::unordered_map<avledet::util::Hash, std::vector<TerrainMod>> m_prefabMods;
+
+    // loot.json: what Awake of a new owned ZDO draws and writes (Container, PickableItem, WearNTear)
+    struct AwakeStep
+    {
+        enum Kind { DROPTABLE, PICKABLE, WEARNTEAR } m_kind;
+        int m_index;// component index in the prefab
+        int m_gap;  // fixed draws before it
+        int m_inner;// draws inside (DROPTABLE: varies)
+    };
+    struct AwakeSteps
+    {
+        std::vector<AwakeStep> m_steps[2];// without and with random initial damage
+        int m_tail[2] {};
+    };
+    // ItemDrop.ItemData defaults
+    struct ItemDef
+    {
+        avledet::util::Hash m_prefab;
+        std::string m_name;// m_shared.m_name
+        int m_maxStack;
+        int m_type;
+        float m_durability;
+        int m_quality;
+        int m_variant;
+    };
+    struct DropDef
+    {
+        ItemDef const *m_item;
+        float m_weight;
+        int m_min;
+        int m_max;
+        bool m_dontScale;
+    };
+    struct ContainerDef
+    {
+        int m_width;
+        int m_height;
+        float m_chance;
+        int m_min;
+        int m_max;
+        bool m_oneOfEach;
+        std::vector<DropDef> m_drops;
+    };
+    struct PickableDef
+    {
+        bool m_fixed;
+        std::vector<std::tuple<ItemDef const *, int, int>> m_items;
+    };
+    std::unordered_map<avledet::util::Hash, AwakeSteps> m_awakeSteps;
+    std::unordered_map<std::string, ItemDef> m_items;
+    std::unordered_map<avledet::util::Hash, std::vector<ContainerDef>> m_containers;
+    std::unordered_map<avledet::util::Hash, std::vector<PickableDef>> m_pickables;
+    std::unordered_map<avledet::util::Hash, float> m_startFuel;
+    std::unordered_set<avledet::util::Hash> m_enabledByDefault, m_spawnTime, m_plantTime;
+    std::vector<int> m_nonScaledDropTypes;
+
+    void LoadLoot();
+    float ScalarKey(std::string_view key) const;
+    int ScaleDrops(VUtils::Random::State &state, ItemDef const &item, int min, int max) const;
+    void FillContainer(VUtils::Random::State &state, ZDO &zdo, ContainerDef const &c) const;
+    void PickItem(VUtils::Random::State &state, ZDO &zdo, PickableDef const &p) const;
     std::vector<std::pair<ZDO::reference, float>> m_snappers;
     bool m_visualSnapper = false;
 
@@ -381,10 +445,8 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
     // destroys generated objects whose lifetime ran out (all: as if time had passed)
     void ExpireLifetimes(bool all);
 
-    bool has_global_key(std::string_view key) const
-    {
-        return m_globalKeys.contains(key);
-    }
+    void GlobalKeyAdd(std::string_view keyStr, bool saveServerOption = true);
+    bool GlobalKeyRemove(std::string_view keyStr, bool saveServerOption = true);
 
     // ZoneSystem.GetGlobalKey: by the key name, case insensitive, a value after a space ignored
     bool GetGlobalKey(std::string_view name) const;

@@ -15,197 +15,34 @@
 #include <quill/LogMacros.h>
 #include <quill/sinks/ConsoleSink.h>
 
-#include "BitPack.h"
 #include "CompileSettings.h"
 #include "DataStream.h"
 
 namespace avledet::util {
+    // user id and id, as in vanilla (ZDOID: long + uint)
     class ZDOID
     {
         friend struct ankerl::unordered_dense::hash<ZDOID>;
 
-        using UType = std::uint32_t;
-
-        // User: 0, ID: 1
-        BitPack<UType, AVL_USERID_BITS_I_, sizeof(UType) * 8 - AVL_USERID_BITS_I_> m_pack;
-
-      private:
-        static inline std::array<std::int64_t, decltype(m_pack)::capacity<0>::value> INDEXED_USERID;
-
-        static constexpr auto USERID_PACK_INDEX = 0;
-        static constexpr auto ID_PACK_INDEX     = 1;
-
-        // HMM, this is solely for zdos loaded by the server
-        //  where userID == 0
-        //  If any player-created ZDOs go over the UID limit, we shall punish them
-        //      (really, 1M+ zdos in a SINGLE SESSION!?! either this gamer has no life, or is being malicious...)
-        //      (IF being MALICIOUS, two likely possibilities:)
-        //          - player knows / guessed the upper limit of possible ZDOID-UIDs bits,
-        //              this is easily avoidable if we add a ZDOID-UID increment limit
-        //              either way, kick the player?
-        //                  then decide to discard ALL those ZDOs, or keep..? why would you want to keep illegitimate objects...
-        //          - player has actually created x 1M+ ZDOs
-        //              - nuke them
-        static constexpr auto BIT_SHARING = 4;
+        std::int64_t m_user_id {};
+        std::uint32_t m_id {};
 
       public:
         static const ZDOID NONE;
 
-      private:
-        // Get the index of a UserID
-        //  The UserID is inserted if it does not exist
-        //  Returns the insertion index or the existing index of the UserID
-        static decltype(m_pack)::type _get_user_id_index(std::int64_t user_id)
-        {
-            if (user_id == 0)
-                return 0;
-
-            //We start at index 4, because the first 4 are reserved for ordinal bit sharing
-            for (std::size_t i = BIT_SHARING; i < INDEXED_USERID.size(); i++) {
-                // after first index, values of 0 mean free
-                if (INDEXED_USERID[i] == 0) {
-                    INDEXED_USERID[i] = user_id;
-                    return static_cast<decltype(m_pack)::type>(i);
-                } else if (INDEXED_USERID[i] == user_id) {
-                    return static_cast<decltype(m_pack)::type>(i);
-                }
-            }
-
-            // TODO
-            //  there is no real exhaustion protection for UserID, only for ID
-            //  we are screwed, and thus a server restart is mandatory
-            //  After knowing how 2^USERID_BITS number of PLAYERS have joined / left, restarts are expected
-            throw std::runtime_error("ID pool exhaustion");
-        }
-
-        static std::int64_t _get_user_id(std::size_t index)
-        {
-            // index 0 means no owner,
-            //if (index < BIT_SHARING)
-            //return 0;
-
-            if (index < INDEXED_USERID.size())
-                return INDEXED_USERID[index];
-
-            throw std::runtime_error("user id by index not found");
-        }
-
-        // Retrieve the index of the UserID
-        decltype(auto) _get_user_id_index() const
-        {
-            return m_pack.get<USERID_PACK_INDEX>();
-        }
-
-        // Set the associated UserID index
-        void _set_user_id_index(decltype(m_pack)::type index)
-        {
-            m_pack.set<USERID_PACK_INDEX>(index);
-        }
-
-      public:
         ZDOID() = default;
-        ZDOID(std::int64_t user_id, std::uint32_t id);
-
-        //ZDOID(const ZDOID &) = default;
-
-        ////friend bool operator==(ZDOID const &lhs, ZDOID const &rhs) noexcept
-        ////{
-        ////    return lhs.m_pack == rhs.m_pack;
-        ////}
-
-        ////friend bool operator<(ZDOID const &lhs, ZDOID const &rhs) noexcept
-        ////{
-        ////    return lhs.m_pack < rhs.m_pack;
-        ////}
-
-        // 3-way <=> broken? (see bitpack <=> / == and <)
-        //friend auto operator<=>(ZDOID const &lhs, ZDOID const &rhs) noexcept
-        //{
-        //    return lhs.m_pack <=> rhs.m_pack;
-        //}
+        ZDOID(std::int64_t user_id, std::uint32_t id) : m_user_id(user_id), m_id(id) {}
 
         friend auto operator<=>(ZDOID const &lhs, ZDOID const &rhs) noexcept = default;
 
-        //friend bool operator==(ZDOID const &lhs, ZDOID const &rhs) noexcept = default;
-
-        //bool operator==(const ZDOID &other) const noexcept
-        //{
-        //    return this->m_pack == other.m_pack;
-        //    //return this->m_user_id == other.m_user_id
-        //    //&& this->m_id == other.m_id;
-        //}
-
-        //bool operator!=(const ZDOID &other) const noexcept
-        //{
-        //    return !(*this == other);
-        //}
-
         // Return whether this has a value besides NONE
-        operator bool() const noexcept
-        {
-            //return !(m_pack == ZDOID::NONE.m_pack);
-            return *this != ZDOID::NONE;
-            //assert(false);
-            //return false;
-        }
+        operator bool() const noexcept { return *this != ZDOID::NONE; }
 
-        std::int64_t get_user_id() const
-        {
-            return INDEXED_USERID[_get_user_id_index()];
-        }
+        std::int64_t get_user_id() const { return m_user_id; }
+        void set_user_id(std::int64_t user_id) { m_user_id = user_id; }
 
-        void set_user_id(std::int64_t user_id)
-        {
-            // logic:
-            //  if setting to 0, and current index is NOT sharing, set index to 0
-            //  if setting to any UserID != 0, and we are bitsharing greater than 0, we THROW
-
-            auto sharing = _get_user_id_index();
-            if (user_id == 0 && sharing >= BIT_SHARING) {
-                _set_user_id_index(_get_user_id_index(user_id));
-                //_set_user_id_index(0); //AKA
-            } else if (user_id != 0 && sharing > 0 && sharing < BIT_SHARING) {
-                // panic
-                throw std::runtime_error("ID pool exhaustion of user id set");
-            } else {
-                _set_user_id_index(_get_user_id_index(user_id));
-            }
-        }
-
-        std::uint32_t get_id() const
-        {
-            //If we are borrowing an extended UserID, then shift our result
-            auto result  = m_pack.get<ID_PACK_INDEX>();
-            auto sharing = _get_user_id_index();
-            if (sharing < BIT_SHARING) {
-                result |= (sharing << decltype(m_pack)::count<ID_PACK_INDEX>());
-            }
-            return result;
-        }
-
-        void set_id(std::uint32_t id)
-        {
-            if (_get_user_id_index()
-                < BIT_SHARING) {// [user_id.index < BIT_SHARING] also refers to 0; AKA no owner
-                // we must set the user id
-                auto sharing = id >> decltype(m_pack)::count<ID_PACK_INDEX>();
-                if (sharing
-                    < BIT_SHARING) {// if there are upper bits set, which we can handle (without overflow)
-                    _set_user_id_index(sharing);
-                    id &= static_cast<decltype(id)>(decltype(m_pack)::capacity<
-                            ID_PACK_INDEX>());// the & trims off the significant bits, which we just denoted within user id index
-                }
-            }
-
-            if (id > decltype(m_pack)::capacity<ID_PACK_INDEX>()) {
-                // exhaustion
-                throw std::domain_error("exhaustion of ID pool");
-            }
-
-            assert(id <= decltype(m_pack)::capacity<ID_PACK_INDEX>());
-
-            m_pack.set<ID_PACK_INDEX>(id);
-        }
+        std::uint32_t get_id() const { return m_id; }
+        void set_id(std::uint32_t id) { m_id = id; }
     };
 
 }// namespace avledet::util
@@ -222,7 +59,8 @@ struct ankerl::unordered_dense::hash<avledet::util::ZDOID>
 
     auto operator()(avledet::util::ZDOID const &value) const noexcept -> std::uint64_t
     {
-        return ankerl::unordered_dense::detail::wyhash::hash(value.m_pack.get_underlying());
+        return ankerl::unordered_dense::detail::wyhash::mix(static_cast<std::uint64_t>(value.m_user_id),
+                                                            0x9E3779B97F4A7C15ull ^ value.m_id);
     }
 };
 

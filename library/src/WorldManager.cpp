@@ -155,6 +155,7 @@ void WorldManager::Save(std::filesystem::path const &dir)
     WaitSave();
 
     auto start = std::chrono::steady_clock::now();
+    m_lastSave = start;
     SaveJob job {dir, m_saveNumber + 1, m_saveNumber, {}};
     auto main  = [&](std::string_view ext) { return std::format("_main.{}.{}", job.m_save, ext); };
 
@@ -183,9 +184,15 @@ void WorldManager::Save(std::filesystem::path const &dir)
     LOG_INFO(AVL_LOGGER, "World save {} serialized in {}ms", job.m_save,
              std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
 
-    m_savingNumber = job.m_save;
-    m_saveOk       = false;
-    m_saveThread   = std::thread([this, job = std::move(job)] { m_saveOk = WriteSave(job); });
+    m_savingNumber         = job.m_save;
+    m_saveOk               = false;
+    m_saveDone             = false;
+    m_saveThreadStart      = std::chrono::steady_clock::now();
+    m_saveSerializeSeconds = std::chrono::duration<float>(m_saveThreadStart - start).count();
+    m_saveThread           = std::thread([this, job = std::move(job)] {
+        m_saveOk   = WriteSave(job);
+        m_saveDone = true;
+    });
 }
 
 bool WorldManager::WriteSave(SaveJob const &job)
@@ -226,6 +233,17 @@ void WorldManager::WaitSave()
     m_saveThread.join();
     if (m_saveOk)
         m_saveNumber = m_savingNumber;
+}
+
+void WorldManager::Update()
+{
+    if (!m_saveThread.joinable() || !m_saveDone)
+        return;
+    float written = std::chrono::duration<float>(std::chrono::steady_clock::now() - m_saveThreadStart).count();
+    WaitSave();
+    if (m_saveOk)
+        Avledet::instance().Broadcast(UIMsgType::TopLeft, std::format("$msg_worldsaved ( {:.2f}+{:.2f}s )",
+                                                                      m_saveSerializeSeconds, written));
 }
 
 void WorldManager::Save()

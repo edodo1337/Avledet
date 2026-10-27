@@ -148,8 +148,8 @@ void ConfigManager::load()
 
             r(m_server_name, server, "name", "Avledet server",
               [](std::string const &val) { return val.empty() || val.length() < 3 || val.length() > 64; });
-            r(m_server_password, server, "password", "",
-              [](std::string const &val) { return !val.empty() && (val.length() < 5 || val.length() > 11); });
+            // any length, as vanilla; a public server checks it at start
+            r(m_server_password, server, "password", "", nullptr);
             c(m_server_port, server, "port", 2456, nullptr);
             r(m_server_public, server, "public", false, nullptr);
             c(m_server_dedicated, server, "dedicated", true, nullptr);
@@ -160,7 +160,6 @@ void ConfigManager::load()
                 Player settings
             */
 
-            r(m_player_whitelist_on, players, "whitelist", true, nullptr);
             r(m_player_limit, players, "max-online", 10, [](int val) { return val < 1; });
             r(m_player_auth, players, "authenticate", true, nullptr);
             // If timeout is 0, will never timeout
@@ -315,9 +314,7 @@ void ConfigManager::load()
             }
 
             if (m_server_password.empty()) {
-                if (!m_player_whitelist_on) {
-                    LOG_WARNING(AVL_LOGGER, "Server does not have a password");
-                }
+                LOG_WARNING(AVL_LOGGER, "Server does not have a password");
             } else {
                 LOG_NOTICE(AVL_LOGGER, "Server password is {}{}", COLOR_GOLD, m_server_password);
             }

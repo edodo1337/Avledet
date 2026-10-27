@@ -53,32 +53,10 @@ void Avledet::LoadFiles(bool reloading)
 {
     ConfigManager::instance().load();
 
-    if (auto &&opt = VUtils::Resource::ReadFile<std::string>("blacklist.yml")) {
-        try {
-            auto node   = YAML::Load(*opt);
-            m_blacklist = node.as<decltype(m_blacklist)>();
-        } catch (const YAML::Exception &e) {
-            LOG_ERROR(AVL_LOGGER, "{}", e.what());
-        }
-    }
-
-    if (auto &&opt = VUtils::Resource::ReadFile<std::string>("whitelist.yml")) {
-        try {
-            auto node   = YAML::Load(*opt);
-            m_whitelist = node.as<decltype(m_whitelist)>();
-        } catch (const YAML::Exception &e) {
-            LOG_ERROR(AVL_LOGGER, "{}", e.what());
-        }
-    }
-
-    if (auto &&opt = VUtils::Resource::ReadFile<std::string>("admin.yml")) {
-        try {
-            auto node = YAML::Load(*opt);
-            m_admin   = node.as<decltype(m_admin)>();
-        } catch (const YAML::Exception &e) {
-            LOG_ERROR(AVL_LOGGER, "{}", e.what());
-        }
-    }
+    std::filesystem::path dir(AVL_CONFIG.m_world_savedir);
+    m_adminList.Open(dir / "adminlist.txt", "List admin players ID  ONE per line");
+    m_bannedList.Open(dir / "bannedlist.txt", "List banned players ID  ONE per line");
+    m_permittedList.Open(dir / "permittedlist.txt", "List permitted players ID ONE per line");
 
 #if AVL_IS_ON(AVL_DISCORD_INTEGRATION)
     if (AVL_CONFIG.TEST_discordAccountLinking) {
@@ -96,8 +74,6 @@ void Avledet::LoadFiles(bool reloading)
     if (reloading) {
         // then iterate players, settings active and inactive
         for (auto &&peer : NetManager::instance().GetPeers()) {
-            peer->SetAdmin(m_admin.contains(peer->m_socket->get_host_name()));
-
             // TODO add a 'previously gated' bit
             //  so discord integration doesnt get messed up
             peer->SetGated(AVL_CONFIG.m_discord_player_restrict);
@@ -123,36 +99,6 @@ void Avledet::SaveFiles()
 {
     {
         WorldManager::instance().Save();
-    }
-
-    {
-        YAML::Node node(m_blacklist);
-
-        YAML::Emitter emit;
-        emit.SetIndent(2);
-        emit << node;
-
-        VUtils::Resource::WriteFile("blacklist.yml", emit.c_str());
-    }
-
-    {
-        YAML::Node node(m_whitelist);
-
-        YAML::Emitter emit;
-        emit.SetIndent(2);
-        emit << node;
-
-        VUtils::Resource::WriteFile("whitelist.yml", emit.c_str());
-    }
-
-    {
-        YAML::Node node(m_admin);
-
-        YAML::Emitter emit;
-        emit.SetIndent(2);
-        emit << node;
-
-        VUtils::Resource::WriteFile("admin.yml", emit.c_str());
     }
 
 #if AVL_IS_ON(AVL_DISCORD_INTEGRATION)
@@ -539,6 +485,10 @@ void Avledet::PeriodUpdate()
             m_worldTimeMultiplier = 1;
             m_playerSleepEnd      = m_worldTime;
             LOG_INFO(AVL_LOGGER, "Sleep ended, day {}", GetDay());
+
+            // Game.SleepStop: save if the last save is over a minute old
+            if (WorldManager::instance().SinceSave() > 60s)
+                WorldManager::instance().Save();
         }
     } else {
         // Game.UpdateSleeping: EnvMan afternoon or night (day fraction >= 0.5 or <= 0.15), not within
@@ -548,10 +498,15 @@ void Avledet::PeriodUpdate()
             && m_worldTime - m_playerSleepEnd >= 10) {
             bool allInBed = true;
             bool anyInBed = false;
+            int characters = 0;
 
+            // EverybodyIsTryingToSleep: only peers with a character count (dead or loading ones do not)
             for (auto &&peer : NetManager::instance().GetPeers()) {
                 auto &&zdo = peer->find_zdo();
-                bool inBed = zdo && zdo->get_bool(avledet::util::hashes::ZDO::Player::IN_BED, false);
+                if (!zdo)
+                    continue;
+                characters++;
+                bool inBed = zdo->get_bool(avledet::util::hashes::ZDO::Player::IN_BED, false);
                 if (!inBed) {
                     allInBed = false;
                     if (!AVL_CONFIG.playerSleepSolo)// early break if special sleep mode is not enabled
@@ -565,7 +520,7 @@ void Avledet::PeriodUpdate()
                 }
             }
 
-            if ((allInBed || (anyInBed && AVL_CONFIG.playerSleepSolo)) && !NetManager::instance().GetPeers().empty()) {
+            if ((allInBed || (anyInBed && AVL_CONFIG.playerSleepSolo)) && characters > 0) {
                 m_playerSleep = true;
 
                 // EnvMan.SkipToMorning: the morning after the day of (now - morning)
@@ -609,17 +564,19 @@ void Avledet::PeriodUpdate()
         LOG_INFO(AVL_LOGGER, "Config was reloaded");
     }
 
+    WorldManager::instance().Update();
+
+    // Game.UpdateSaving: the interval counts from the last save of any kind, a warning 30 s before
     if (AVL_CONFIG.m_world_save_interval > 0s) {
-        // save warming message
-        if (VUtils::run_periodic_later<struct periodic_save_message>(AVL_CONFIG.m_world_save_interval,
-                                                                     AVL_CONFIG.m_world_save_interval)) {
+        auto since = WorldManager::instance().SinceSave();
+        if (!m_saveWarned && since >= AVL_CONFIG.m_world_save_interval - 30s) {
+            m_saveWarned = true;
             LOG_INFO(AVL_LOGGER, "World saving in 30s");
             Broadcast(UIMsgType::Center, "$msg_worldsavewarning 30s");
         }
-
-        if (VUtils::run_periodic_later<struct periodic_save>(AVL_CONFIG.m_world_save_interval,
-                                                             AVL_CONFIG.m_world_save_interval + 30s)) {
-            WorldManager::instance().Save();
+        if (since > AVL_CONFIG.m_world_save_interval) {
+            m_saveWarned = false;
+            NetManager::instance().SaveWorld();
         }
     }
 }

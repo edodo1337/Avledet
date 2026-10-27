@@ -30,9 +30,9 @@ Peer::Peer(ISocket::Ptr socket) :
     // 1.0: client sends its invite secret key here, unused on a Steam server
     this->Register("ServerHandshake", [](Peer::Ptr rpc, std::string_view inviteSecretKey) {
         rpc->Register("PeerInfo", [](Peer::Ptr rpc, DataReader reader) {
-            rpc->m_characterID.set_user_id(reader.read<std::int64_t>());
+            rpc->m_uid = reader.read<std::int64_t>();
 #if AVL_IS_ON(AVL_DISALLOW_MALICIOUS_PLAYERS)
-            if (!rpc->m_characterID)
+            if (!rpc->m_uid)
                 throw std::runtime_error("peer provided 0 owner");
 #endif
             auto version = reader.read<std::string_view>();
@@ -55,6 +55,16 @@ Peer::Peer(ISocket::Ptr socket) :
                 throw std::runtime_error("peer provided invalid length name");
 #endif
             rpc->m_playfabId = reader.read<std::string>();
+
+            // vanilla IsAllowed: banned id or name, or not on a non-empty permitted list
+            auto &&host = rpc->m_socket->get_host_name();
+            auto &&avl  = Avledet::instance();
+            if (avl.m_bannedList.ContainsId(host) || avl.m_bannedList.Contains(rpc->m_name)
+                || (!avl.m_permittedList.GetList().empty() && !avl.m_permittedList.ContainsId(host))) {
+                LOG_INFO(AVL_LOGGER, "Player {} : {} is blacklisted or not in whitelist", rpc->m_name, host);
+                return rpc->close(ConnectionStatus::ErrorBanned);
+            }
+
             rpc->SetSimDistance(reader);
 
             auto password = reader.read<std::string_view>();
@@ -67,40 +77,25 @@ Peer::Peer(ISocket::Ptr socket) :
 
                     if (!steamSocket->authenticate(ticket)) {
                         LOG_INFO(AVL_LOGGER, "Client {} has invalid ticket", rpc->m_socket->get_host_name());
-                        return rpc->close(ConnectionStatus::ErrorDisconnected);
+                        return rpc->close(ConnectionStatus::ErrorBanned);
                     }
                 }
             }
 
+            if (NetManager::instance().GetPeers().size() >= AVL_CONFIG.m_player_limit)
+                return rpc->close(ConnectionStatus::ErrorFull);
+
             if (password != std::string_view(NetManager::instance().m_passwordHash))
                 return rpc->close(ConnectionStatus::ErrorPassword);
 
-            // if peer already connected
-            //  peers with a new character can connect while replaying,
-            //  but same characters with presumably same uuid will not work (same host/steam acc works because ReplaySocket prepends host with a 'REPLAY_'
-            if (NetManager::instance().FindPeerByUserID(rpc->GetUserID()) || NetManager::instance().FindPeerByName(rpc->m_name))
+            // vanilla refuses only the same session id (IsConnected(uid))
+            if (NetManager::instance().FindPeerByUserID(rpc->GetUserID()))
                 return rpc->close(ConnectionStatus::ErrorAlreadyConnected);
 
             NetManager::instance().OnPeerConnect(rpc);
 
             return false;
         });
-
-        if (Avledet::instance().m_blacklist.contains(rpc->m_socket->get_host_name()))
-            return rpc->close(ConnectionStatus::ErrorBanned);
-
-        if (NetManager::instance().FindPeerByHost(rpc->m_socket->get_host_name()))
-            return rpc->close(ConnectionStatus::ErrorAlreadyConnected);
-
-        // if whitelist enabled
-        if (AVL_CONFIG.m_player_whitelist_on
-            && !Avledet::instance().m_whitelist.contains(rpc->m_socket->get_host_name())) {
-            return rpc->close(ConnectionStatus::ErrorFull);
-        }
-
-        // if too many players online
-        if (NetManager::instance().GetPeers().size() >= AVL_CONFIG.m_player_limit)
-            return rpc->close(ConnectionStatus::ErrorFull);
 
         bool hasPassword = !AVL_CONFIG.m_server_password.empty();
 
@@ -135,6 +130,11 @@ void Peer::update()
     ZoneScoped;
 
     auto now(std::chrono::steady_clock::now());
+
+    if (m_kickedAt && now - *m_kickedAt > std::chrono::seconds(1)) {
+        Disconnect();
+        return;
+    }
 
     // Send packet data
     //m_socket->Update();
@@ -198,7 +198,7 @@ bool Peer::close(ConnectionStatus status)
 
 bool Peer::IsAdmin() const
 {
-    return m_pack.get<ADMIN_PACK_INDEX>();
+    return Avledet::instance().m_adminList.ContainsId(m_socket->get_host_name());
 }
 
 bool Peer::IsMapVisible() const
@@ -213,7 +213,11 @@ bool Peer::IsGated() const
 
 void Peer::SetAdmin(bool enable)
 {
-    m_pack.set<ADMIN_PACK_INDEX>(enable);
+    auto &&list = Avledet::instance().m_adminList;
+    if (enable)
+        list.Add(m_socket->get_host_name());
+    else
+        list.Remove(m_socket->get_host_name());
 }
 
 void Peer::SetMapVisible(bool enable)

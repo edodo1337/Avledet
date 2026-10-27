@@ -214,8 +214,15 @@ namespace avledet::gen {
                     active[i] = false;
             if (spawn.m_off >= 0)
                 active[spawn.m_off] = !spawned;
-            if (!spawned && offProxies && spawn.m_offProxy.m_prefabHash != 0)
-                offProxies->push_back(spawn.m_offProxy);
+            // m_OffObject.SetActive(!spawned): spawns sharing one off object, the last one decides
+            if (offProxies && spawn.m_offProxy.m_prefabHash != 0) {
+                auto same = [&](Prefab::Instance const &p) {
+                    return p.m_prefabHash == spawn.m_offProxy.m_prefabHash && p.m_pos == spawn.m_offProxy.m_pos;
+                };
+                std::erase_if(*offProxies, same);
+                if (!spawned)
+                    offProxies->push_back(spawn.m_offProxy);
+            }
             if (result)
                 result->m_spawned.push_back(spawned);
         }

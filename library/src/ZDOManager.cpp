@@ -314,7 +314,8 @@ void ZdoManager::LoadChunks(std::filesystem::path const &dir, std::uint32_t save
             throw std::runtime_error(file + " predates the chunked save");
         auto num = reader.read<std::int32_t>();
         for (int i = 0; i < num; i++) {
-            auto &&insert = _Instantiate(ZDOID(0, m_nextUid++));
+            // vanilla: loaded ZDOs get user 1 (UnknownFormerUser), user 0 means none to clients
+            auto &&insert = _Instantiate(ZDOID(1, m_nextUid++));
             auto &&zdo    = ZDO::make_reference(insert.first);
             if (!zdo->load(reader)) {
                 // vanilla keeps them; this server cannot, it has no prefab to run them by
@@ -439,8 +440,8 @@ std::pair<ZDO::smart_set::iterator, bool> ZdoManager::_Instantiate(ZDOID zdoid, 
 
 ZDO::reference ZdoManager::_Instantiate(Vector3f position) noexcept
 {
-    //ZDOID zdoid = ZDOID(AVL_ID, 0);
-    ZDOID zdoid = ZDOID(0, 0);
+    // server ZDOs carry the server session id, as in vanilla
+    ZDOID zdoid = ZDOID(AVL_ID, 0);
     for (;;) {
         zdoid.set_id(m_nextUid++);
         auto &&insert = _Instantiate(zdoid, position);

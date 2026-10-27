@@ -1,5 +1,7 @@
 #pragma once
 
+#include "SyncedList.h"
+
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -68,13 +70,12 @@ class Avledet : public avledet::util::IManager<Avledet>
   public:
     //Internal use ONLY!!!
     std::atomic_bool m_run_state {};
+    bool m_saveWarned {};
 
-    avledet::util::Set<std::string, ankerl::unordered_dense::string_hash, std::equal_to<>>
-            m_blacklist;// banned steam ids
-    avledet::util::Set<std::string, ankerl::unordered_dense::string_hash, std::equal_to<>>
-            m_admin;    // admin steam ids
-    avledet::util::Set<std::string, ankerl::unordered_dense::string_hash, std::equal_to<>>
-            m_whitelist;// whitelisted steam ids
+    // vanilla lists in the save dir
+    SyncedList m_adminList;
+    SyncedList m_bannedList;
+    SyncedList m_permittedList;
 
   private:
     void LoadFiles(bool reloading);

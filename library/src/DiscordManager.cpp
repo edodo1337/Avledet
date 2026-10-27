@@ -79,8 +79,6 @@ void DiscordManager::init()
         } else {
             Avledet::instance().RunTask([this, label, event](Task &) {
                 if (label == "avladmin") {
-                    auto &&admin = Avledet::instance().m_admin;
-
                     auto param_variant = event.get_parameter("identifier");
                     auto flag_variant  = event.get_parameter("flag");
                     auto &&identifier  = std::get_if<std::string>(&param_variant);
@@ -110,6 +108,7 @@ void DiscordManager::init()
 
                     } else {
                         // reply with a list of all admins
+                        auto &&admin = Avledet::instance().m_adminList.GetList();
                         if (admin.empty()) {
                             event.reply("There are no players with admin privileges");
                         } else {
@@ -204,9 +203,10 @@ void DiscordManager::init()
                         event.reply("Player not found");
                 } else if (label == "avlpardon") {
                     auto &&host = std::get<std::string>(event.get_parameter("host"));
-                    if (Avledet::instance().m_blacklist.erase(host))
+                    if (Avledet::instance().m_bannedList.Contains(host)) {
+                        Avledet::instance().m_bannedList.Remove(host);
                         event.reply("Unbanned " + host);
-                    else
+                    } else
                         event.reply("Player is not banned");
                 } else if (label == "avlreload") {
                     Avledet::instance().LoadFiles(true);
@@ -250,16 +250,9 @@ void DiscordManager::init()
                                                                   : "night"));
                     }
                 } else if (label == "avlwhitelist") {
-                    auto flag_variant = event.get_parameter("flag");
-                    auto &&flag       = std::get_if<bool>(&flag_variant);
-                    if (flag) {
-                        AVL_CONFIG.m_player_whitelist_on = *flag;
-                        event.reply(std::string("Whitelist is now ")
-                                    + (AVL_CONFIG.m_player_whitelist_on ? "enabled" : "disabled"));
-                    } else {
-                        event.reply(std::string("The whitelist is ")
-                                    + (AVL_CONFIG.m_player_whitelist_on ? "enabled" : "disabled"));
-                    }
+                    // as vanilla: on when permittedlist.txt is not empty
+                    event.reply(Avledet::instance().m_permittedList.GetList().empty() ? "The whitelist is disabled"
+                                                                                       : "The whitelist is enabled");
                 } else if (label == "avlwhois") {
                     auto &&identifier = std::get<std::string>(event.get_parameter("identifier"));
                     if (auto peer = NetManager::instance().FindPeer(identifier)) {
