@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -49,6 +50,20 @@ class WorldManager : public avledet::util::IManager<WorldManager>
     // PersistentEventSystem data, passed through
     avledet::util::Bytes m_persistentEvents;
 
+    // a serialized save, written to disk off the main thread like vanilla's save thread
+    struct SaveJob
+    {
+        std::filesystem::path m_dir;
+        std::uint32_t m_save;
+        std::uint32_t m_previous;
+        std::vector<std::pair<std::string, avledet::util::Bytes>> m_files;// in write order, .ok last
+    };
+    std::thread m_saveThread;
+    std::atomic<bool> m_saveOk;
+    std::uint32_t m_savingNumber = 0;
+
+    static bool WriteSave(SaveJob const &job);
+
     // newest save number with an .ok marker
     static std::optional<std::uint32_t> FindSave(std::filesystem::path const &dir);
     void Load(std::filesystem::path const &dir, std::uint32_t save);
@@ -58,9 +73,12 @@ class WorldManager : public avledet::util::IManager<WorldManager>
 
     std::filesystem::path GetWorldDir() const;
 
-    // writes save N+1, then deletes save N and the chunk files it no longer lists
+    // serializes save N+1 now and writes it in the background, then deletes save N and the
+    // chunk files it no longer lists; a save still being written is waited for first
     void Save(std::filesystem::path const &dir);
     void Save();
+    // waits for the background write
+    void WaitSave();
 
     void PostZoneInit();
 

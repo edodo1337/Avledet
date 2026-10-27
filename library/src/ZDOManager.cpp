@@ -60,62 +60,8 @@ void ZdoManager::Update()
     //	}
     //) == m_objectsByID.size());
 
-    // TODO requires testing
-    //	link portals if mode enabled
-#if AVL_IS_ON(AVL_PORTAL_LINKING)
-    if (VUtils::run_periodic<struct link_portals>(1s)) {
-        auto &&portals = GetZDOs(avledet::util::hashes::Object::portal_wood);
-
-        // TODO use the optimized Lua ported code for linking portals
-        //	not the exact code but the way the algo works
-
-        auto &&FindRandomUnconnectedPortal = [&](ZDOID skip, std::string_view tag) -> ZDO::optional {
-            std::vector<ZDO::reference> list;
-            for (auto &&zdo : portals) {
-                if (zdo->get_id() != skip
-                    && zdo->get_string(avledet::util::hashes::ZDO::TeleportWorld::TAG) == tag
-                    && !zdo->get_connection_zdoid(ZDOConnector::Type::Portal)) {
-                    list.push_back(zdo);
-                }
-            }
-
-            if (list.empty()) {
-                return ZDO::nullopt;
-            }
-
-            return ZDO::make_optional(list[VUtils::Random::State().range(0, list.size())]);
-        };
-
-        for (auto &&zdo : portals) {
-            auto &&connectionZDOID = zdo->get_connection_zdoid(ZDOConnector::Type::Portal);
-            auto &&string          = zdo->get_string(avledet::util::hashes::ZDO::TeleportWorld::TAG);
-            if (connectionZDOID) {
-                auto &&zdo2 = find_zdo(connectionZDOID);
-                if (!zdo2 || zdo2->get_string(avledet::util::hashes::ZDO::TeleportWorld::TAG) != string) {
-                    zdo->claim();
-                    zdo->set_connection(ZDOConnector::Type::Portal, ZDOID::NONE);
-                    ForceSendZDO(zdo->get_id());
-                }
-            }
-        }
-
-        for (auto &&zdo3 : portals) {
-            if (!zdo3->get_connection_zdoid(ZDOConnector::Type::Portal)) {
-                auto &&string2 = zdo3->get_string(avledet::util::hashes::ZDO::TeleportWorld::TAG);
-                auto &&zdo4    = FindRandomUnconnectedPortal(zdo3->get_id(), string2);
-                if (zdo4) {
-                    zdo3->claim();
-                    zdo4->claim();
-                    zdo3->set_connection(ZDOConnector::Type::Portal, zdo4->get_id());
-                    zdo4->set_connection(ZDOConnector::Type::Portal, zdo3->get_id());
-                    ForceSendZDO(zdo3->get_id());
-                    ForceSendZDO(zdo4->get_id());
-                    //zdo3.Apply();
-                }
-            }
-        }
-    }
-#endif
+    if (VUtils::run_periodic<struct link_portals>(5s))
+        ConnectPortals();
 
 
     auto &&peers = NetManager::instance().GetPeers();
@@ -189,6 +135,76 @@ void ZdoManager::_InvalidateZDOZone(ZDO::reference zdo)
     }
 }
 
+// Game.SetConnection: the owner online links its portal itself
+void ZdoManager::_SetPortalConnection(ZDO::reference portal, ZDOID connection, bool force)
+{
+    auto owner = portal->get_owner();
+    if (!owner || !NetManager::instance().FindPeerByUserID(owner) || force) {
+        portal->claim();
+        portal->set_connection(ZDOConnector::Type::Portal, connection);
+        ForceSendZDO(portal->get_id());
+    } else {
+        RouteManager::instance().Invoke(owner, "RPC_SetConnection", portal->get_id(), connection);
+    }
+}
+
+// Game.ConnectPortals, every 5 s: drop broken links, then pair free portals with the same tag
+void ZdoManager::ConnectPortals()
+{
+    using Type = ZDOConnector::Type;
+    auto tag   = [](ZDO::reference zdo) { return zdo->get_string(avledet::util::hashes::ZDO::TeleportWorld::TAG); };
+
+    // ClearCurrentlyConnectingPortals: pairs of the last run are forced now
+    for (auto &&[a, b] : m_connectingPortals) {
+        for (auto &&[from, to] : {std::pair(a, b), std::pair(b, a)}) {
+            auto zdo = find_zdo(from);
+            if (zdo && zdo->get_connection_zdoid(Type::Portal) != to)
+                _SetPortalConnection(zdo, to, true);
+        }
+    }
+    m_connectingPortals.clear();
+    auto connecting = [&](ZDOID id) {
+        return std::ranges::any_of(m_connectingPortals, [id](auto &&p) { return p.first == id || p.second == id; });
+    };
+
+    ZDO::reference_list portals;
+    for (auto name : {"portal_wood", "portal_stone", "portal"}) {
+        auto list = GetZDOs(avledet::util::get_stable_hash(name));
+        portals.insert(portals.end(), list.begin(), list.end());
+    }
+
+    for (auto &&zdo : portals) {
+        auto target = zdo->get_connection_zdoid(Type::Portal);
+        if (!target)
+            continue;
+        auto other = find_zdo(target);
+        if (!other || tag(other) != tag(zdo) || !other->get_connection_zdoid(Type::Portal))
+            _SetPortalConnection(zdo, ZDOID::NONE, false);
+    }
+
+    int count = 0;
+    for (auto &&zdo : portals) {
+        if (connecting(zdo->get_id()) || zdo->get_connection_zdoid(Type::Portal))
+            continue;
+        // FindRandomUnconnectedPortal
+        ZDO::reference_list free;
+        for (auto &&other : portals) {
+            if (other != zdo && tag(other) == tag(zdo) && !other->get_connection_zdoid(Type::Portal)
+                && !connecting(other->get_id()))
+                free.push_back(other);
+        }
+        if (free.empty())
+            continue;
+        auto other = free[m_portalRandom.range(0, (std::int32_t) free.size())];
+        m_connectingPortals.emplace_back(zdo->get_id(), other->get_id());
+        _SetPortalConnection(zdo, other->get_id(), false);
+        _SetPortalConnection(other, zdo->get_id(), false);
+        count++;
+    }
+    if (count)
+        LOG_INFO(AVL_LOGGER, "Connected {} portals", count);
+}
+
 namespace {
     // Game.m_portalPrefabs: saved apart, in ChunkPortal
     bool IsPortal(avledet::util::Hash prefab)
@@ -224,7 +240,7 @@ namespace {
     }
 }// namespace
 
-std::vector<std::string> ZdoManager::SaveChunks(std::filesystem::path const &dir, std::uint32_t save)
+std::vector<std::pair<std::string, avledet::util::Bytes>> ZdoManager::SaveChunks(std::uint32_t save)
 {
     // ZDOExtraData.RegenerateConnectionHashData: one int per linked pair, the target gets type|Target
     avledet::util::Map<ZDOID, ZDOConnectorData> connections;
@@ -247,7 +263,7 @@ std::vector<std::string> ZdoManager::SaveChunks(std::filesystem::path const &dir
             chunks[IsPortal(zdo->get_prefab_hash()) ? CHUNK_PORTAL : ChunkOf(zdo->get_position())].push_back(&*zdo);
     }
 
-    std::vector<std::string> files;
+    std::vector<std::pair<std::string, avledet::util::Bytes>> files;
     DataWriter index;
     index.write((std::int16_t) VConstants::WORLD);
     std::int32_t total = 0;
@@ -264,9 +280,7 @@ std::vector<std::string> ZdoManager::SaveChunks(std::filesystem::path const &dir
             auto find = connections.find(zdo->get_id());
             zdo->save(writer, find != connections.end() ? &find->second : nullptr);
         }
-        files.push_back(ChunkFile(chunk, 0, save));
-        if (!VUtils::Resource::WriteFile(dir / files.back(), writer.get_buf()))
-            throw std::runtime_error("failed to write " + files.back());
+        files.emplace_back(ChunkFile(chunk, 0, save), writer.release());
 
         index.write(chunk);
         index.write((std::uint8_t) 0);
@@ -274,8 +288,7 @@ std::vector<std::string> ZdoManager::SaveChunks(std::filesystem::path const &dir
         index.write((std::int32_t) zdos.size());
     }
 
-    if (!VUtils::Resource::WriteFile(dir / std::format("_main.{}.chunks", save), index.get_buf()))
-        throw std::runtime_error("failed to write the chunk index");
+    files.emplace_back(std::format("_main.{}.chunks", save), index.release());
     return files;
 }
 

@@ -59,6 +59,7 @@ class Avledet : public avledet::util::IManager<Avledet>
 #if AVL_IS_ON(AVL_PLAYER_SLEEP)
     bool m_playerSleep {};
     double m_playerSleepUntil {};
+    double m_playerSleepEnd = -100;// world time the last sleep ended
 #endif
 
   public:

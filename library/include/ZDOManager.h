@@ -12,6 +12,7 @@
 #include "Types.h"
 #include "Vector.h"
 #include "VUtils.h"
+#include "VUtilsRandom.h"
 #include "ZDO.h"
 #include "ZoneManager.h"
 
@@ -180,6 +181,13 @@ class ZdoManager : public avledet::util::IManager<ZdoManager>
     // saved connection hashes back to ZDO links, after a load
     void _ConnectAll();
 
+    // portals being linked by their owners (Game.m_currentlyConnectingPortals)
+    std::vector<std::pair<ZDOID, ZDOID>> m_connectingPortals;
+    VUtils::Random::State m_portalRandom;
+    void _SetPortalConnection(ZDO::reference portal, ZDOID connection, bool force);
+    // Game.ConnectPortals
+    void ConnectPortals();
+
     ZDO::optional _find_zdo(ZDOID const &v)
     {
         auto &&find = m_objectsByID.find(v);
@@ -207,9 +215,9 @@ class ZdoManager : public avledet::util::IManager<ZdoManager>
     void Init();
     void Update();
 
-    // Vanilla 1.0 chunked save: persistent ZDOs in <dir>/YY_XX__0_<save>.chunk files (8x8 zones each,
-    // portals in their own file) and the index _main.<save>.chunks. Returns the chunk file names.
-    std::vector<std::string> SaveChunks(std::filesystem::path const &dir, std::uint32_t save);
+    // Vanilla 1.0 chunked save: persistent ZDOs in YY_XX__0_<save>.chunk files (8x8 zones each,
+    // portals in their own file), the index _main.<save>.chunks last. Serialized only, no file io.
+    std::vector<std::pair<std::string, avledet::util::Bytes>> SaveChunks(std::uint32_t save);
 
     void LoadChunks(std::filesystem::path const &dir, std::uint32_t save);
 

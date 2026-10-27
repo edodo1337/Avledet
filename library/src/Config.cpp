@@ -167,7 +167,7 @@ void ConfigManager::load()
             r(m_player_timeout, players, "timeout", 30s,
               [](std::chrono::seconds val) { return val < 0s; });
 #if AVL_IS_ON(AVL_PLAYER_SLEEP)
-            a(playerSleepSolo, players, "player-sleep-solo", false, nullptr);
+            r(playerSleepSolo, players, "player-sleep-solo", false, nullptr);
 #endif
             // TODO put under discord option
             c(m_discord_player_restrict, experimental, "players-restrict", false, nullptr);

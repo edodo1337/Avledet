@@ -372,6 +372,7 @@ void Avledet::uninit()
 #endif
 
     this->SaveFiles();
+    WorldManager::instance().WaitSave();
 
     LOG_INFO(AVL_LOGGER, "Server gracefully stopped");
 
@@ -414,6 +415,11 @@ bool Avledet::update()
     // This is important to processing RPC remote invocations
     if (!NetManager::instance().GetPeers().empty()) {
         m_worldTime += delta() * m_worldTimeMultiplier;
+        // EnvMan.UpdateTimeSkip stops exactly at the morning
+        if (m_playerSleep && m_worldTime >= m_playerSleepUntil) {
+            m_worldTime           = m_playerSleepUntil;
+            m_worldTimeMultiplier = 1;
+        }
     }
 
     AVL_SCRIPT_EVENT(ScriptManager::Events::Update);
@@ -465,7 +471,7 @@ void Avledet::PeriodUpdate()
 #if AVL_IS_ON(AVL_PLAYER_SLEEP)
     //if (AVL_CONFIG.playerSleep) {
     if (m_playerSleep) {
-        if (m_worldTime > m_playerSleepUntil) {
+        if (m_worldTime >= m_playerSleepUntil) {
             // Wake up players
 
             if (AVL_CONFIG.playerSleepSolo) {
@@ -484,9 +490,14 @@ void Avledet::PeriodUpdate()
 
             m_playerSleep         = false;
             m_worldTimeMultiplier = 1;
+            m_playerSleepEnd      = m_worldTime;
         }
     } else {
-        if (IsAfternoon() || IsNight()) {
+        // Game.UpdateSleeping: EnvMan afternoon or night (day fraction >= 0.5 or <= 0.15), not within
+        // 10 s of the last sleep
+        auto timeOfDay = GetTimeOfDay(m_worldTime);
+        if ((timeOfDay >= 0.5 * WORLD_TIME_LENGTH || timeOfDay <= 0.15 * WORLD_TIME_LENGTH)
+            && m_worldTime - m_playerSleepEnd >= 10) {
             bool allInBed = true;
             bool anyInBed = false;
 
@@ -509,8 +520,9 @@ void Avledet::PeriodUpdate()
             if ((allInBed || (anyInBed && AVL_CONFIG.playerSleepSolo)) && !NetManager::instance().GetPeers().empty()) {
                 m_playerSleep = true;
 
-                // Skip to time
-                m_playerSleepUntil = GetNextMorning();
+                // EnvMan.SkipToMorning: the morning after the day of (now - morning)
+                auto day           = (int) ((m_worldTime - 0.15 * WORLD_TIME_LENGTH) / WORLD_TIME_LENGTH);
+                m_playerSleepUntil = (float) (day + 1) * WORLD_TIME_LENGTH + (float) WORLD_TIME_LENGTH * 0.15f;
 
                 // Set skip interval
                 m_worldTimeMultiplier = (m_playerSleepUntil - m_worldTime) / 12.0;

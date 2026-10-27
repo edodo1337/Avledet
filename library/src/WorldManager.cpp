@@ -152,17 +152,14 @@ void WorldManager::Load(std::filesystem::path const &dir, std::uint32_t save)
 
 void WorldManager::Save(std::filesystem::path const &dir)
 {
+    WaitSave();
+
     auto start = std::chrono::steady_clock::now();
-    std::filesystem::create_directories(dir);
-    auto const save = m_saveNumber + 1;
-    auto file       = [&](std::uint32_t n, std::string_view ext) { return dir / std::format("_main.{}.{}", n, ext); };
-    auto write      = [&](std::filesystem::path const &path, avledet::util::Bytes const &bytes) {
-        if (!VUtils::Resource::WriteFile(path, bytes))
-            throw std::runtime_error("failed to write " + path.string());
-    };
+    SaveJob job {dir, m_saveNumber + 1, m_saveNumber, {}};
+    auto main  = [&](std::string_view ext) { return std::format("_main.{}.{}", job.m_save, ext); };
 
     // vanilla order: chunks and their index, .db2, .fwl2, then the .ok marker
-    auto chunks = ZdoManager::instance().SaveChunks(dir, save);
+    job.m_files = ZdoManager::instance().SaveChunks(job.m_save);
 
     DataWriter db;
     db.write(VConstants::WORLD);
@@ -177,26 +174,58 @@ void WorldManager::Save(std::filesystem::path const &dir)
     db.write(Vector3f::ZERO);
 #endif
     db.write(m_persistentEvents.empty() ? NO_PERSISTENT_EVENTS : m_persistentEvents);
-    write(file(save, "db2"), db.get_buf());
-    write(file(save, "fwl2"), m_world->SaveMeta());
-
+    job.m_files.emplace_back(main("db2"), db.release());
+    job.m_files.emplace_back(main("fwl2"), m_world->SaveMeta());
     DataWriter ok;
     ok.write(VConstants::WORLD);
-    write(file(save, "ok"), ok.get_buf());
+    job.m_files.emplace_back(main("ok"), ok.release());
+
+    LOG_INFO(AVL_LOGGER, "World save {} serialized in {}ms", job.m_save,
+             std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
+
+    m_savingNumber = job.m_save;
+    m_saveOk       = false;
+    m_saveThread   = std::thread([this, job = std::move(job)] { m_saveOk = WriteSave(job); });
+}
+
+bool WorldManager::WriteSave(SaveJob const &job)
+{
+    auto start = std::chrono::steady_clock::now();
+    std::error_code err;
+    std::filesystem::create_directories(job.m_dir, err);
+
+    for (auto &&[name, bytes] : job.m_files) {
+        if (!VUtils::Resource::WriteFile(job.m_dir / name, bytes)) {
+            LOG_ERROR(AVL_LOGGER, "World save {} failed writing {}", job.m_save, name);
+            // the previous save stays the newest one with an .ok
+            for (auto &&[written, _] : job.m_files)
+                std::filesystem::remove(job.m_dir / written, err);
+            return false;
+        }
+    }
 
     // the new save is complete: drop the previous one and chunk files nothing lists
-    std::error_code err;
     for (auto ext : {"fwl2", "db2", "chunks", "ok"})
-        std::filesystem::remove(file(m_saveNumber, ext), err);
-    for (auto &&entry : std::filesystem::directory_iterator(dir, err)) {
+        std::filesystem::remove(job.m_dir / std::format("_main.{}.{}", job.m_previous, ext), err);
+    for (auto &&entry : std::filesystem::directory_iterator(job.m_dir, err)) {
         auto name = entry.path().filename().string();
-        if (name.ends_with(".chunk") && std::ranges::find(chunks, name) == chunks.end())
+        if (name.ends_with(".chunk")
+            && std::ranges::none_of(job.m_files, [&](auto &&file) { return file.first == name; }))
             std::filesystem::remove(entry.path(), err);
     }
-    m_saveNumber = save;
 
-    LOG_INFO(AVL_LOGGER, "World save {} ({} chunks) took {}ms", save, chunks.size(),
+    LOG_INFO(AVL_LOGGER, "World save {} ({} files) written in {}ms", job.m_save, job.m_files.size(),
              std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
+    return true;
+}
+
+void WorldManager::WaitSave()
+{
+    if (!m_saveThread.joinable())
+        return;
+    m_saveThread.join();
+    if (m_saveOk)
+        m_saveNumber = m_savingNumber;
 }
 
 void WorldManager::Save()

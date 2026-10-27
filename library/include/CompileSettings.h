@@ -282,6 +282,7 @@
     #endif
 #endif
 
+// vanilla Game.UpdateSleeping runs on the server, so it is on even with scripting
 #if defined(AVL_PLAYER_SLEEP)
     #if AVL_PLAYER_SLEEP != 0
         #define AVL_PLAYER_SLEEP_I_ AVL_ON
@@ -289,11 +290,7 @@
         #define AVL_PLAYER_SLEEP_I_ AVL_OFF
     #endif
 #else
-    #if AVL_IS_ON(AVL_GAME_MECHANICS)
-        #define AVL_PLAYER_SLEEP_I_ AVL_DEFAULT_ON
-    #else
-        #define AVL_PLAYER_SLEEP_I_ AVL_DEFAULT_OFF
-    #endif
+    #define AVL_PLAYER_SLEEP_I_ AVL_DEFAULT_ON
 #endif
 
 // Whether to include extra useful builtins
