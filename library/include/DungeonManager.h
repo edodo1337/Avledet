@@ -52,7 +52,8 @@ class DungeonManager : public avledet::util::IManager<DungeonManager>
 
     ZDO::reference generate(Dungeon const &dungeon, Vector3f pos, Quaternion rot);
     ZDO::reference generate(Dungeon const &dungeon, Vector3f pos, Quaternion rot, avledet::util::Hash seed);
-    void generate(Dungeon const &dungeon, ZDO::reference zdo, bool randomDamage = false);
+    // rot, scale: the generator's instantiate rotation and scale
+    void generate(Dungeon const &dungeon, ZDO::reference zdo, bool randomDamage, Quaternion rot, Vector3f scale);
 
     //std::vector<const Dungeon*> get_dungeons() const;
 };

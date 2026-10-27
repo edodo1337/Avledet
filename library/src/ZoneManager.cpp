@@ -1528,6 +1528,8 @@ void ZoneManager::GenerateFeature(Feature const &location, avledet::util::Hash s
 
             // TODO not really optional, it is required through a branch
             ZDO::optional zdo;
+            Quaternion genRot;
+            Vector3f genScale(1, 1, 1);
 
             if (dungeon.m_use_custom_interior_transform) {
                 // vanilla SpawnLocation moves the interior transform so the generator lands in the zone
@@ -1538,10 +1540,13 @@ void ZoneManager::GenerateFeature(Feature const &location, avledet::util::Hash s
                 local.y        = dungeon.m_interior_position.y;
 
                 zdo = ZdoManager::instance().Instantiate(piece.m_prefabHash, pos + rot * local);
-                zdo->set_rotation(rot * inv);
+                genRot = rot * inv;
+                zdo->set_rotation(genRot);
             } else {
                 zdo = ZdoManager::instance().Instantiate(piece.m_prefabHash, pos + rot * piece.m_pos, piece.m_scale);
-                zdo->set_rotation(rot * piece.m_rot);
+                genRot   = rot * piece.m_rot;
+                genScale = piece.m_scale;
+                zdo->set_rotation(genRot);
             }
 
             assert(zdo);
@@ -1551,7 +1556,7 @@ void ZoneManager::GenerateFeature(Feature const &location, avledet::util::Hash s
                 DungeonManager::instance().m_dungeonInstances.push_back(zdo->get_id());
 
             AwakeRandom(state, *zdo, randomDamage);
-            DungeonManager::instance().generate(dungeon, zdo, randomDamage);
+            DungeonManager::instance().generate(dungeon, zdo, randomDamage, genRot, genScale);
         }
     }
 

@@ -297,11 +297,12 @@ class ScriptManager : public avledet::util::IManager<ScriptManager>
     };
 
   private:
+    // first, so it is destroyed last: scripts and callbacks hold references into it
+    sol::state m_state;//48 bytes
     avledet::util::Map<std::string, std::unique_ptr<ScriptInfo>, ankerl::unordered_dense::string_hash,
                        std::equal_to<>>
             m_scripts;                                                            //64 bytes
     avledet::util::Map<avledet::util::Hash, std::vector<EventHandle>> m_callbacks;//64 bytes
-    sol::state m_state;//48 bytes
     std::vector<std::string> m_custom_globals; // per-env
     bool m_tmp_unsubscribe {};
 

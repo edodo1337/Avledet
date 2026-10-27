@@ -36,8 +36,9 @@ class DungeonGenerator
 
   public:
     bool m_random_damage;    // vanilla WearNTear.m_randomInitialDamage during the location spawn
-    Quaternion m_rot;        // instanced rotation
+    Quaternion m_rot;        // transform.rotation as Unity stores it
     Vector3f m_pos;          // instanced position
+    Vector3f m_scale;        // transform scale, the rooms are its children
     Vector3f m_zone_center;
     Dungeon const &m_dungeon;//TODO use reference
     ZDO::reference m_zdo;
@@ -119,7 +120,9 @@ class DungeonGenerator
     bool CheckRequiredRooms();
 
   public:
-    DungeonGenerator(Dungeon const &dungeon, ZDO::reference zdo, bool randomDamage = false);
+    // rot, scale: what the generator was instantiated with (its transform, not the ZDO's euler angles)
+    DungeonGenerator(Dungeon const &dungeon, ZDO::reference zdo, bool randomDamage, Quaternion rot,
+                     Vector3f scale = Vector3f(1, 1, 1));
 
     DungeonGenerator(DungeonGenerator const &other) = delete;
 

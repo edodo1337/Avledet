@@ -1,5 +1,7 @@
 #pragma once
 
+#include "UnityTransform.h"
+
 #include "VUtils.h"
 
 #if AVL_IS_ON(AVL_DUNGEON_GENERATION)
@@ -86,7 +88,10 @@ struct RoomInstance
     int m_seed       = 0;
     std::vector<std::unique_ptr<RoomConnectionInstance>> m_connections;
 
-    RoomInstance(Room const &room, Vector3f pos, Quaternion rot, int placeOrder, int seed) :
+    // the room is a child of the generator transform (genPos, genRot, genScale): Unity stores its
+    // local pose, a connection's world pose comes back through that hierarchy
+    RoomInstance(Room const &room, Vector3f pos, Quaternion rot, int placeOrder, int seed, Vector3f genPos,
+                 Quaternion genRot, Vector3f genScale) :
         m_room(room),
         m_pos(pos),
         m_rot(rot),
@@ -107,10 +112,15 @@ struct RoomInstance
 
             //m_connections.emplace_back(*conn.get(), childWorldPos, childWorldRot, placeOrder);
 
-            auto global = VUtils::Physics::LocalToGlobal(conn->m_localPos, conn->m_localRot, pos, rot);
+            using namespace avledet::unity;
+            Vector3f one(1, 1, 1);
+            auto localPos = ToLocal(genPos, genRot, genScale, pos);
+            auto localRot = ToLocal(genRot, genScale, rot);
+            auto worldPos = ToWorld(genPos, genRot, genScale, ToWorld(localPos, localRot, one, conn->m_localPos));
+            auto worldRot = ToWorld(genRot, genScale, ToWorld(localRot, one, conn->m_localRot));
 
-            m_connections.push_back(std::make_unique<RoomConnectionInstance>(*conn.get(), global.first,
-                                                                             global.second, placeOrder));
+            m_connections.push_back(
+                    std::make_unique<RoomConnectionInstance>(*conn.get(), worldPos, worldRot, placeOrder));
         }
     }
 };

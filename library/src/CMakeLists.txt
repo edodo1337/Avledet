@@ -34,6 +34,7 @@ target_sources(avledet_library
         ${CMAKE_CURRENT_SOURCE_DIR}/NetSocketTcp.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Peer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Physics.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/UnityTransform.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Prefab.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/PrefabManager.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Quaternion.cpp

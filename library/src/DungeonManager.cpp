@@ -295,7 +295,7 @@ ZDO::reference DungeonManager::generate(Dungeon const &dungeon, Vector3f pos, Qu
     auto &&zdo = ZdoManager::instance().Instantiate(dungeon.m_prefab, pos);
     zdo->set_rotation(rot);
 
-    DungeonGenerator(dungeon, zdo).Generate();
+    DungeonGenerator(dungeon, zdo, false, rot).Generate();
 
     return zdo;
 }
@@ -306,14 +306,15 @@ ZDO::reference DungeonManager::generate(Dungeon const &dungeon, Vector3f pos, Qu
     auto &&zdo = ZdoManager::instance().Instantiate(dungeon.m_prefab, pos);
     zdo->set_rotation(rot);
 
-    DungeonGenerator(dungeon, zdo).Generate(seed);
+    DungeonGenerator(dungeon, zdo, false, rot).Generate(seed);
 
     return zdo;
 }
 
-void DungeonManager::generate(Dungeon const &dungeon, ZDO::reference zdo, bool randomDamage)
+void DungeonManager::generate(Dungeon const &dungeon, ZDO::reference zdo, bool randomDamage, Quaternion rot,
+                              Vector3f scale)
 {
-    DungeonGenerator(dungeon, zdo, randomDamage).Generate();
+    DungeonGenerator(dungeon, zdo, randomDamage, rot, scale).Generate();
 }
 
 /*

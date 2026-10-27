@@ -5,6 +5,7 @@
 #include <map>
 #include <stdexcept>
 
+#include "UnityTransform.h"
 #include "VUtilsResource.h"
 
 namespace avledet::phys {
@@ -222,9 +223,12 @@ namespace avledet::phys {
 
     void World::Add(Collider const &c, Vector3f pos, Quaternion rot, float scale)
     {
-        Vector3f wp = pos + rot * (c.m_pos * scale);
-        Quaternion wr = rot * c.m_rot;
-        Vector3f ws = c.m_scale * scale;
+        // the collider's transform under the instantiated root, as Unity composes it
+        Vector3f rootScale(scale, scale, scale);
+        Quaternion root = unity::Normalize(rot);
+        Vector3f wp     = unity::ToWorld(pos, root, rootScale, c.m_pos);
+        Quaternion wr   = unity::ToWorld(root, rootScale, c.m_rot);
+        Vector3f ws     = c.m_scale * scale;
         m_shapes.push_back({wp, c.m_layers});
         auto world  = [&](Vector3f v) { return wr * (v * ws); };// relative to wp
         float sx = std::abs(ws.x), sy = std::abs(ws.y), sz = std::abs(ws.z);

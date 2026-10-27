@@ -15,12 +15,15 @@
     #include "VUtilsPhysics.h"
     #include "WorldManager.h"
     #include "ZDOManager.h"
+    #include "UnityTransform.h"
     #include "ZoneManager.h"
 
-DungeonGenerator::DungeonGenerator(Dungeon const &dungeon, ZDO::reference zdo, bool randomDamage) :
+DungeonGenerator::DungeonGenerator(Dungeon const &dungeon, ZDO::reference zdo, bool randomDamage, Quaternion rot,
+                                   Vector3f scale) :
     m_random_damage(randomDamage),
-    m_rot(zdo->get_rotation()),
+    m_rot(avledet::unity::Normalize(rot)),
     m_pos(zdo->get_position()),
+    m_scale(scale),
     m_dungeon(dungeon),
     m_zdo(zdo)
 {
@@ -869,7 +872,7 @@ void DungeonGenerator::PlaceRoom(Room const &room, Vector3f pos, Quaternion rot)
     ZoneManager::instance().RegisterVisuals(room.m_randoms, roll, active, pos, rot);
 
     // TODO this might be redundant for dummy 'dungeons' (plains villages shouldnt be considered dungeons)
-    auto component2 = std::make_unique<RoomInstance>(room, pos, rot, 0, seed);
+    auto component2 = std::make_unique<RoomInstance>(room, pos, rot, 0, seed, m_pos, m_rot, m_scale);
     m_placed_rooms.push_back(std::move(component2));
 }
 
@@ -940,7 +943,8 @@ void DungeonGenerator::PlaceRoom(Room const &room, Vector3f pos, Quaternion rot,
         ZoneManager::instance().RegisterVisuals(room.m_randoms, roll, active, worldPos, worldRot);
     }
 
-    auto component2 = std::make_unique<RoomInstance>(room, pos, rot, fromConnection.m_placeOrder + 1, seed);
+    auto component2 = std::make_unique<RoomInstance>(room, pos, rot, fromConnection.m_placeOrder + 1, seed, m_pos,
+                                                     m_rot, m_scale);
 
     this->AddOpenConnections(*component2, fromConnection);
 

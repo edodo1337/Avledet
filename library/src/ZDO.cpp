@@ -11,6 +11,7 @@
 #include "Prefab.h"
 #include "PrefabManager.h"
 #include "Types.h"
+#include "UnityTransform.h"
 #include "VUtilsResource.h"
 #include "ZDO.h"
 #include "ZDOID.h"
@@ -276,7 +277,9 @@ Quaternion ZDO::get_rotation() const
 
 void ZDO::set_rotation(Quaternion rot)
 {
-    auto &&euler = rot.euler_angles();
+    // the server sets it on objects it instantiates, where ZNetView.Awake saves transform.rotation:
+    // the rotation setter normalized it the Unity way
+    auto &&euler = avledet::unity::Normalize(rot).euler_angles();
     if (euler != this->m_rotation) {
         this->m_rotation = euler;
         this->_revise();
