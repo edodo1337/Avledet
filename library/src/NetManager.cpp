@@ -547,17 +547,23 @@ void NetManager::Update()
     }
 
     {
+        bool gone = false;
         for (auto &&itr = m_connectedPeers.begin(); itr != m_connectedPeers.end();) {
             Peer::Ptr &peer = *itr;
 
             if (peer->m_socket->get_status() == Status::Closed) {
                 OnPeerDisconnect(peer);
 
-                itr = m_connectedPeers.erase(itr);
+                itr  = m_connectedPeers.erase(itr);
+                gone = true;
             } else {
                 ++itr;
             }
         }
+#if AVL_IS_ON(AVL_ENABLE_SCRIPTING)
+        if (gone)
+            ScriptManager::instance().collect_garbage();
+#endif
     }
 }
 

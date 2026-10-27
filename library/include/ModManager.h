@@ -334,6 +334,10 @@ public:
   public:
     void load_userdata();
 
+    // an event hands a peer to Lua as a shared_ptr: it lives until a GC cycle, and a quiet Lua heap
+    // runs none, so a gone peer kept its ZDO map (~0.7 MB a visit)
+    void collect_garbage() { m_state.collect_garbage(); }
+
     std::tuple<ScriptInfo, std::string> load_file_script(std::filesystem::path script_root);
     void execute(ScriptInfo const &info, std::string const &code, bool replace);//dynamic or mobile script
 
