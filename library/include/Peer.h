@@ -91,6 +91,7 @@ class Peer : public std::enable_shared_from_this<Peer>,
 
   private:
     std::chrono::steady_clock::time_point m_lastPing;
+    std::chrono::steady_clock::time_point m_joinTime;
 
   public:
     using Ptr = std::shared_ptr<Peer>;

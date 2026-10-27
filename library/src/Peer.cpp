@@ -166,6 +166,8 @@ void Peer::update()
                     quill::utility::to_hex(reader.data() + reader.get_pos(), max_size));
             }
 
+            LOG_BACKTRACE(AVL_LOGGER, "{} rpc {} {}", m_name.empty() ? m_socket->get_host_name() : m_name,
+                          method_name(hash), hash);
             InternalInvoke(hash, reader);
         }
         
@@ -188,7 +190,7 @@ void Peer::InternalInvoke(avledet::util::Hash hash, DataReader &reader)
 
 bool Peer::close(ConnectionStatus status)
 {
-    LOG_INFO(AVL_LOGGER, "Peer error: {}", magic_enum::enum_name(status));
+    LOG_INFO(AVL_LOGGER, "{} rejected: {}", m_socket->get_host_name(), magic_enum::enum_name(status));
     Invoke(avledet::util::hashes::Rpc::S2C_Error, status);
     Disconnect();
     return false;

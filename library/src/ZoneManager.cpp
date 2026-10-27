@@ -620,6 +620,7 @@ void ZoneManager::PopulateZone(Heightmap &heightmap)
 
     if (std::getenv("AVL_PROBE_ZONES"))
         s_probeZone = heightmap.get_zone();
+    LOG_BACKTRACE(AVL_LOGGER, "generating zone {}", heightmap.get_zone());
 
     //#if AVL_IS_ON(AVL_ZONE_GENERATION)
     std::vector<ClearArea> m_tempClearAreas;

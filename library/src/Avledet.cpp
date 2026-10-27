@@ -1,10 +1,16 @@
 #include "Config.h"
 #include "ReplayManager.h"
 #include <chrono>
+#include <csignal>
+#include <exception>
+#include <fstream>
 #include <mutex>
 #include <stdlib.h>
 #include <thread>
 #include <type_traits>
+#ifndef _WIN32
+    #include <unistd.h>
+#endif
 #include <utility>
 #ifdef _WIN32
 //#include <winstring.h> //TODO getting many dumb errors 'LookuPContect' unknown override specifier'...
@@ -14,6 +20,9 @@
 #include <magic_enum/magic_enum.hpp>
 #include <quill/core/LogLevel.h>
 #include <quill/LogMacros.h>
+#include <quill/Backend.h>
+#include <quill/Frontend.h>
+#include <quill/sinks/ConsoleSink.h>
 #include <quill/sinks/RotatingFileSink.h>
 #include <tracy/Tracy.hpp>
 #include <yaml-cpp/yaml.h>
@@ -218,66 +227,76 @@ void Avledet::init()
         options.enable_yield_when_idle = false;
         options.sleep_duration         = 1ms;
 
-        quill::Backend::start(options);
+        // crash signals flush the log and name the signal; SIGINT/SIGTERM stay ours (graceful stop)
+        quill::SignalHandlerOptions signals;
+        signals.catchable_signals = {SIGABRT, SIGFPE, SIGILL, SIGSEGV
+#ifndef _WIN32
+                                     , SIGBUS
+#endif
+        };
+        quill::Backend::start<quill::FrontendOptions>(options, signals);
     }
 
     {
         std::vector<std::shared_ptr<quill::Sink>> sinks {
-                quill::Frontend::create_or_get_sink<quill::ConsoleSink>(
-                        "server_con",
-                        []() {
-                            // See RotatingFileSinkConfig for more options
-
-                            quill::ConsoleSinkConfig cfg;
-                            //cfg.set_colour_mode(quill::ConsoleSinkConfig::ColourMode::Automatic);
-                            //cfg
-
-                            //cfg.set_open_mode('w');
-                            //cfg.set_filename_append_option(quill::FilenameAppendOption::StartDateTime);
-                            //cfg.set_rotation_time_daily("24:00");
-                            //cfg.set_rotation_max_file_size(1024); // small value to demonstrate the example
-
-                            return cfg;
-                        }()),
+                quill::Frontend::create_or_get_sink<quill::ConsoleSink>("server_con"),
                 quill::Frontend::create_or_get_sink<quill::RotatingFileSink>(
                         "server.log",
                         []() {
-                            // See RotatingFileSinkConfig for more options
-
                             quill::RotatingFileSinkConfig cfg;
-
                             cfg.set_open_mode('w');
                             cfg.set_filename_append_option(quill::FilenameAppendOption::StartDateTime);
+                            // a long running server must not fill the disk
                             cfg.set_rotation_time_daily("00:00");
-                            //cfg.set_rotation_max_file_size(1024); // small value to demonstrate the example
-                            //cfg.set_minimum_fsync_interval(); //fsync forces a disk write
-                            //cfg.set_write_buffer_size()
-                            //cfg.set_fsync_enabled(bool value)
-                            //cfg.set_write_buffer_size(size_t value)
-
+                            cfg.set_rotation_max_file_size(64 * 1024 * 1024);
+                            cfg.set_max_backup_files(14);
                             return cfg;
                         }()),
         };
 
         quill::PatternFormatterOptions options {
-                "%(time) [%(thread_name)] %(short_source_location:<30) %(log_level:<9) %(message)",// format
-                //"%D %H:%M:%S.%Qms",                                              // timestamp format
-                "%H:%M:%S.%Qms",// timestamp format
-                quill::Timezone::LocalTime};
+                "%(time) [%(thread_name)] %(short_source_location:<28) %(log_level:<9) %(message)",
+                "%Y-%m-%d %H:%M:%S.%Qms", quill::Timezone::LocalTime};
 
         auto logger = quill::Frontend::create_or_get_logger("main", std::move(sinks), options);
 
         logger->set_log_level(quill::LogLevel::TraceL3);
+        // breadcrumbs (LOG_BACKTRACE: rpcs, zone generation) are kept in memory and written out
+        // only with the next error, so a failure shows what led to it
+        logger->init_backtrace(256, quill::LogLevel::Error);
 
         /* global assigned */ AVL_LOGGER = logger;
     }
+
+    // an exception nobody caught: log it before the abort, the crash handler flushes
+    std::set_terminate([] {
+        std::string what = "unknown";
+        if (auto e = std::current_exception()) {
+            try {
+                std::rethrow_exception(e);
+            } catch (std::exception const &ex) {
+                what = ex.what();
+            } catch (...) {
+            }
+        }
+        LOG_CRITICAL(AVL_LOGGER, "Uncaught exception: {}", what);
+        AVL_LOGGER->flush_log();
+        std::abort();
+    });
 
     m_serverID  = VUtils::Random::GenerateUID();
     m_startTime = std::chrono::steady_clock::now();
 
     this->LoadFiles(false);
 
-    LOG_NOTICE(AVL_LOGGER, "Starting Avledet {} (Valheim {})", AVL_VERSION, VConstants::GAME);
+    LOG_NOTICE(AVL_LOGGER, "Starting Avledet {} (Valheim {}, network {}, world {})", AVL_VERSION, VConstants::GAME,
+               VConstants::NETWORK, VConstants::WORLD);
+    LOG_NOTICE(AVL_LOGGER, "Config: server '{}' port {} public {} password {}, max {} players, world '{}' seed '{}' in "
+                           "'{}', save every {}s",
+               AVL_CONFIG.m_server_name, AVL_CONFIG.m_server_port, AVL_CONFIG.m_server_public,
+               AVL_CONFIG.m_server_password.empty() ? "none" : "set", AVL_CONFIG.m_player_limit,
+               AVL_CONFIG.m_world_name, AVL_CONFIG.m_world_seed, AVL_CONFIG.m_world_savedir,
+               AVL_CONFIG.m_world_save_interval.count());
 
     //m_worldTime = 2040;
     m_worldTime = GetMorning(1);
@@ -443,6 +462,14 @@ bool Avledet::update()
         PeriodUpdate();
     }
 
+    // tick time for the status line; a long one is worth a warning (zone generation, a save)
+    auto work = std::chrono::steady_clock::now() - now;
+    m_tickMax = std::max(m_tickMax, work);
+    m_tickSum += work;
+    m_tickCount++;
+    if (work > 500ms && VUtils::run_periodic<struct slow_tick_warning>(30s))
+        LOG_WARNING(AVL_LOGGER, "Slow tick: {}ms", std::chrono::duration_cast<std::chrono::milliseconds>(work).count());
+
     std::this_thread::sleep_for(1ms);
 
     FrameMark;
@@ -450,10 +477,30 @@ bool Avledet::update()
     return m_run_state;
 }
 
+// resident memory in MB, 0 where /proc is missing
+static long ResidentMB()
+{
+#ifdef _WIN32
+    return 0;
+#else
+    std::ifstream statm("/proc/self/statm");
+    long pages = 0, resident = 0;
+    if (!(statm >> pages >> resident))
+        return 0;
+    return resident * sysconf(_SC_PAGESIZE) / (1024 * 1024);
+#endif
+}
+
 void Avledet::PeriodUpdate()
 {
-    if (VUtils::run_periodic<struct periodic_peer_print>(3min)) {
-        LOG_INFO(AVL_LOGGER, "There are a total of {} peers online", NetManager::instance().GetPeers().size());
+    if (VUtils::run_periodic<struct periodic_status>(5min)) {
+        using ms = std::chrono::duration<double, std::milli>;
+        LOG_INFO(AVL_LOGGER, "Status: {} online, {} zdos, tick avg {:.1f}ms max {:.1f}ms, rss {}MB",
+                 NetManager::instance().GetPeers().size(), ZdoManager::instance().GetZDOCount(),
+                 m_tickCount ? ms(m_tickSum).count() / m_tickCount : 0.0, ms(m_tickMax).count(), ResidentMB());
+        m_tickMax   = {};
+        m_tickSum   = {};
+        m_tickCount = 0;
     }
 
     AVL_SCRIPT_EVENT(ScriptManager::Events::PeriodicUpdate);
@@ -491,6 +538,7 @@ void Avledet::PeriodUpdate()
             m_playerSleep         = false;
             m_worldTimeMultiplier = 1;
             m_playerSleepEnd      = m_worldTime;
+            LOG_INFO(AVL_LOGGER, "Sleep ended, day {}", GetDay());
         }
     } else {
         // Game.UpdateSleeping: EnvMan afternoon or night (day fraction >= 0.5 or <= 0.15), not within
@@ -526,6 +574,8 @@ void Avledet::PeriodUpdate()
 
                 // Set skip interval
                 m_worldTimeMultiplier = (m_playerSleepUntil - m_worldTime) / 12.0;
+                LOG_INFO(AVL_LOGGER, "{} players sleep, skipping {:.0f}s to the morning",
+                         NetManager::instance().GetPeers().size(), m_playerSleepUntil - m_worldTime);
 
                 if (AVL_CONFIG.playerSleepSolo) {
                     // Players who are ALREADY in bed, go ahead and signal them to sleep

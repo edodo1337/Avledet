@@ -28,6 +28,12 @@
 #include "ZDOManager.h"
 #include "ZoneManager.h"
 
+static void RefuseNotAdmin(Peer::Ptr const &peer)
+{
+    LOG_WARNING(AVL_LOGGER, "{} is not admin, command refused", peer->m_name);
+    peer->ConsoleMessage("You are not admin");
+}
+
 Peer::Ptr NetManager::Kick(std::string_view user)
 {
     auto &&peer = FindPeer(user);
@@ -191,7 +197,7 @@ void NetManager::OnPeerConnect(Peer::Ptr peer)
     peer->Register("RPC_RemoteCommand",
                    [](Peer::Ptr peer, std::string_view command) {
                        if (!peer->IsAdmin())
-                           return peer->ConsoleMessage("You are not admin");
+                           return RefuseNotAdmin(peer);
 
                        // TODO run commands or something?
                        //  this is still in beta and subject to change
@@ -222,8 +228,9 @@ void NetManager::OnPeerConnect(Peer::Ptr peer)
                        // TODO maybe permissions tree in future?
                        //  lua? ...
                        if (!peer->IsAdmin())
-                           return peer->ConsoleMessage("You are not admin");
+                           return RefuseNotAdmin(peer);
 
+                       LOG_NOTICE(AVL_LOGGER, "Admin {} kicks '{}'", peer->m_name, user);
                        if (Kick(user)) {
                            peer->ConsoleMessage("Kicked '" + std::string(user) + "'");
                            AVL_DISPATCH_WEBHOOK(std::string(user) + " was kicked");
@@ -234,8 +241,9 @@ void NetManager::OnPeerConnect(Peer::Ptr peer)
 
     peer->Register("Ban", [this](Peer::Ptr peer, std::string_view user) {
         if (!peer->IsAdmin())
-            return peer->ConsoleMessage("You are not admin");
+            return RefuseNotAdmin(peer);
 
+        LOG_NOTICE(AVL_LOGGER, "Admin {} bans '{}'", peer->m_name, user);
         if (Ban(user)) {
             peer->ConsoleMessage("Banned '" + std::string(user) + "'");
             AVL_DISPATCH_WEBHOOK(std::string(user) + " was banned");
@@ -247,9 +255,10 @@ void NetManager::OnPeerConnect(Peer::Ptr peer)
     peer->Register("Unban",
                    [this](Peer::Ptr peer, std::string_view user) {
                        if (!peer->IsAdmin())
-                           return peer->ConsoleMessage("You are not admin");
+                           return RefuseNotAdmin(peer);
 
                        // devcommands requires an exact format...
+                       LOG_NOTICE(AVL_LOGGER, "Admin {} unbans '{}'", peer->m_name, user);
                        Unban(user);
 
                        peer->ConsoleMessage("Unbanning user " + std::string(user));
@@ -257,10 +266,9 @@ void NetManager::OnPeerConnect(Peer::Ptr peer)
 
     peer->Register("Save", [](Peer::Ptr peer) {
         if (!peer->IsAdmin())
-            return peer->ConsoleMessage("You are not admin");
+            return RefuseNotAdmin(peer);
 
-        //WorldManager::instance().WriteFileWorldDB(true);
-
+        LOG_NOTICE(AVL_LOGGER, "Admin {} saves the world", peer->m_name);
         WorldManager::instance().Save();
 
         peer->ConsoleMessage("Saved the world");
@@ -268,7 +276,7 @@ void NetManager::OnPeerConnect(Peer::Ptr peer)
 
     peer->Register("PrintBanned", [](Peer::Ptr peer) {
         if (!peer->IsAdmin())
-            return peer->ConsoleMessage("You are not admin");
+            return RefuseNotAdmin(peer);
 
         if (Avledet::instance().m_blacklist.empty())
             peer->ConsoleMessage("Banned users: (none)");
@@ -314,6 +322,9 @@ void NetManager::OnPeerConnect(Peer::Ptr peer)
     peer->SetGated(AVL_CONFIG.m_discord_player_restrict);
 
     m_onlinePeers.push_back(peer);
+    peer->m_joinTime = std::chrono::steady_clock::now();
+    LOG_NOTICE(AVL_LOGGER, "{} joined ({}, uid {}), {} online", peer->m_name, peer->m_socket->get_host_name(),
+               peer->GetUserID(), m_onlinePeers.size());
 }
 
 Peer::Ptr NetManager::FindPeer(std::string_view any)
@@ -383,7 +394,7 @@ void NetManager::PostInit()
                 }
             }
         } catch (std::exception const &e) {
-            // (un)expected (more like unlikely), but, ... ERRORS ARE POSSIBLE! just look at literally any asio method...
+            LOG_ERROR(AVL_LOGGER, "Failed to set up a new connection: {}", e.what());
         }
     });
 }
@@ -423,9 +434,10 @@ void NetManager::Update()
             }
 
             peer->update();
-        } catch (std::runtime_error const &e) {
-            LOG_WARNING(AVL_LOGGER, "Peer error");
-            LOG_WARNING(AVL_LOGGER, "{}", e.what());
+        } catch (std::exception const &e) {
+            // an error also writes out the breadcrumbs: the rpcs this peer sent before it
+            LOG_ERROR(AVL_LOGGER, "{} ({}) dropped on error: {}", peer->m_name, peer->m_socket->get_host_name(),
+                      e.what());
             peer->m_socket->close(false);
         }
     }
@@ -465,7 +477,10 @@ void NetManager::Update()
 
 void NetManager::OnPeerQuit(Peer::Ptr peer)
 {
-    LOG_INFO(AVL_LOGGER, "Cleaning up peer");
+    LOG_NOTICE(AVL_LOGGER, "{} left after {}min, {} online", peer->m_name,
+               std::chrono::duration_cast<std::chrono::minutes>(std::chrono::steady_clock::now() - peer->m_joinTime)
+                       .count(),
+               m_onlinePeers.size() - 1);
     AVL_DISPATCH_WEBHOOK(peer->m_name + " has quit");
     AVL_SCRIPT_EVENT(ScriptManager::Events::Quit, peer);
 

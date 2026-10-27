@@ -36,6 +36,13 @@ namespace avledet::rpc {
             }
         }
 
+        // registered name of a method, for logs
+        std::string_view method_name(avledet::util::Hash hash) const
+        {
+            auto &&find = m_methods.find(hash);
+            return find != m_methods.end() ? std::string_view(find->get()->m_dbg_desc) : std::string_view();
+        }
+
         // TODO later, for custom LUA
         void register_method(std::unique_ptr<Method> method)
         {

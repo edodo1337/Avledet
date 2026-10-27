@@ -215,6 +215,8 @@ class ZdoManager : public avledet::util::IManager<ZdoManager>
     void Init();
     void Update();
 
+    std::size_t GetZDOCount() const { return m_objectsByID.size(); }
+
     // Vanilla 1.0 chunked save: persistent ZDOs in YY_XX__0_<save>.chunk files (8x8 zones each,
     // portals in their own file), the index _main.<save>.chunks last. Serialized only, no file io.
     std::vector<std::pair<std::string, avledet::util::Bytes>> SaveChunks(std::uint32_t save);

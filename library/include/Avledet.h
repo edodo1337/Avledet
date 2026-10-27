@@ -55,6 +55,9 @@ class Avledet : public avledet::util::IManager<Avledet>
     WorldTime m_worldTime {};
     double m_worldTimeMultiplier  = 1;
     double m_serverTimeMultiplier = 1;
+    // tick time since the last status line
+    std::chrono::steady_clock::duration m_tickMax {}, m_tickSum {};
+    std::uint64_t m_tickCount = 0;
     std::filesystem::file_time_type m_settingsLastTime {};
 #if AVL_IS_ON(AVL_PLAYER_SLEEP)
     bool m_playerSleep {};

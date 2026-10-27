@@ -48,6 +48,7 @@ void RouteManager::OnNewPeer(Peer::Ptr peer)
         auto targetZDO = reader.read<ZDOID>();
         auto hash      = reader.read<avledet::util::Hash>();
         auto params    = reader.read<std::vector<char>>();
+        LOG_BACKTRACE(AVL_LOGGER, "{} routed {} to {} {}", peer->m_name, hash, target, targetZDO);
 
         /*
 		* Rpc and multi-execution dilemna
