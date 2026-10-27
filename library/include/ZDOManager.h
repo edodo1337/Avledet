@@ -113,6 +113,9 @@ class ZdoManager : public avledet::util::IManager<ZdoManager>
 
     // Frees a ZDO from memory by a valid iterator
     [[maybe_unused]] ZDO::smart_set::iterator _EraseZDO(ZDO::smart_set::iterator itr);
+    // members and connectors live in static maps by id: a ZDO dropped without this leaves them to the
+    // next ZDO with that id
+    static void _EraseMembers(ZDOID const &id);
 
     void EraseZDO(ZDOID zdoid)
     {

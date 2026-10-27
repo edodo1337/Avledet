@@ -335,15 +335,7 @@ void ZdoManager::LoadChunks(std::filesystem::path const &dir, std::uint32_t save
             auto &&zdo    = ZDO::make_reference(insert.first);
             if (!zdo->load(reader)) {
                 // vanilla keeps them; this server cannot, it has no prefab to run them by
-                auto id = zdo->get_id();
-                ZDO::m_floats.erase(id);
-                ZDO::m_vec3.erase(id);
-                ZDO::m_quats.erase(id);
-                ZDO::m_ints.erase(id);
-                ZDO::m_longs.erase(id);
-                ZDO::m_strings.erase(id);
-                ZDO::m_byteArrays.erase(id);
-                ZDO::TYPED_CONNECTORS.erase(id);
+                _EraseMembers(zdo->get_id());
                 m_objectsByID.erase(insert.first);
                 unknown++;
                 continue;
@@ -673,6 +665,19 @@ void ZdoManager::AssignOrReleaseZDOs(Peer::Ptr peer)
     }
 }
 
+void ZdoManager::_EraseMembers(ZDOID const &id)
+{
+    ZDO::m_floats.erase(id);
+    ZDO::m_vec3.erase(id);
+    ZDO::m_quats.erase(id);
+    ZDO::m_ints.erase(id);
+    ZDO::m_longs.erase(id);
+    ZDO::m_strings.erase(id);
+    ZDO::m_byteArrays.erase(id);
+    ZDO::PAIRED_CONNECTORS.erase(id);
+    ZDO::TYPED_CONNECTORS.erase(id);
+}
+
 ZDO::smart_set::iterator ZdoManager::_EraseZDO(ZDO::smart_set::iterator itr)
 {
     assert(itr != m_objectsByID.end());
@@ -701,16 +706,7 @@ ZDO::smart_set::iterator ZdoManager::_EraseZDO(ZDO::smart_set::iterator itr)
 
     m_erasedZDOs.insert(zdoid);
 
-    //erase members
-    ZDO::m_floats.erase(zdoid);
-    ZDO::m_vec3.erase(zdoid);
-    ZDO::m_quats.erase(zdoid);
-    ZDO::m_ints.erase(zdoid);
-    ZDO::m_longs.erase(zdoid);
-    ZDO::m_strings.erase(zdoid);
-    ZDO::m_byteArrays.erase(zdoid);
-
-    ZDO::PAIRED_CONNECTORS.erase(zdoid);
+    _EraseMembers(zdoid);
 
     //LOG_INFO(AVL_LOGGER, "zdo erased: {}", zdoid);
 
@@ -1115,9 +1111,12 @@ void ZdoManager::OnNewPeer(Peer::Ptr peer)
             try {
                 zdo->unpack(des, 0);
             } catch (std::exception const &e) {
-                LOG_WARNING(AVL_LOGGER, "Bad ZDO {} from {}: {}", zdoid, peer->m_name, e.what());
-                if (created)
+                LOG_WARNING(AVL_LOGGER, "Bad ZDO {}:{} from {}: {}", zdoid.get_user_id(), zdoid.get_id(), peer->m_name,
+                            e.what());
+                if (created) {
+                    _EraseMembers(zdoid);
                     m_objectsByID.erase(zdo_itr);
+                }
                 continue;
             }
 

@@ -580,11 +580,12 @@ void Avledet::PeriodUpdate()
 
     // Game.UpdateSaving: the interval counts from the last save of any kind, a warning 30 s before
     if (AVL_CONFIG.m_world_save_interval > 0s) {
-        // the warning fires when the timer crosses the mark, any save (sleep, admin) restarts it
+        // the warning fires when the timer crosses the mark, any save (sleep, admin) restarts it; an
+        // interval of 30 s or less has no mark to cross
         auto since = WorldManager::instance().SinceSave();
         if (since < AVL_CONFIG.m_world_save_interval - 30s)
             m_saveWarned = false;
-        else if (!m_saveWarned) {
+        else if (!m_saveWarned && AVL_CONFIG.m_world_save_interval > 30s) {
             m_saveWarned = true;
             LOG_INFO(AVL_LOGGER, "World saving in 30s");
             Broadcast(UIMsgType::Center, "$msg_worldsavewarning 30s");

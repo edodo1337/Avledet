@@ -313,7 +313,9 @@ bool ServerOptions::Run(std::string_view line)
         if (args.size() >= 2) {
             float parsed;
             auto &&a = args[1];
-            if (std::from_chars(a.data(), a.data() + a.size(), parsed).ec == std::errc {})
+            // float.TryParse takes the whole text: "100abc" is no number
+            auto [ptr, ec] = std::from_chars(a.data(), a.data() + a.size(), parsed);
+            if (ec == std::errc {} && ptr == a.data() + a.size())
                 seconds = parsed;
         }
         Avledet::instance().SkipTime(seconds);

@@ -143,40 +143,41 @@ void Peer::update()
         auto &&bytes = opt.value();
         DataReader reader(bytes);
 
-        auto hash = reader.read<avledet::util::Hash>();
-        if (hash == 0) [[unlikely]] {
-            if (reader.read<bool>()) {
-                // Reply to the server with a pong
-                DataWriter writer;
-                writer.write((avledet::util::Hash) 0);
-                writer.write(false);
-                this->Send(writer.release());
-            } else {
-                m_lastPing = now;
-            }
-        } else [[likely]] {
-            auto max_size = std::min(reader.size() - reader.get_pos(), (std::size_t)32);
-            // cap printing
-            if (max_size > 32) {
-                LOG_TRACE_L2(AVL_LOGGER, "{}, {}, {} ... [{}]", m_socket->get_host_name(), hash, 
-                                    quill::utility::to_hex(reader.data() + reader.get_pos(), max_size), reader.size());
-            } else {
-                LOG_TRACE_L2(AVL_LOGGER, "{}, {}, {}", m_socket->get_host_name(), hash, 
-                    quill::utility::to_hex(reader.data() + reader.get_pos(), max_size));
-            }
+        // ZRpc.Update: a short package (the hash and a ping too) ends the update for this frame ("assume
+        // incompatible version", on the server only an unused status), the peer stays; other errors are logged
+        avledet::util::Hash hash {};
+        try {
+            hash = reader.read<avledet::util::Hash>();
+            if (hash == 0) [[unlikely]] {
+                if (reader.read<bool>()) {
+                    // Reply to the server with a pong
+                    DataWriter writer;
+                    writer.write((avledet::util::Hash) 0);
+                    writer.write(false);
+                    this->Send(writer.release());
+                } else {
+                    m_lastPing = now;
+                }
+            } else [[likely]] {
+                auto max_size = std::min(reader.size() - reader.get_pos(), (std::size_t)32);
+                // cap printing
+                if (max_size > 32) {
+                    LOG_TRACE_L2(AVL_LOGGER, "{}, {}, {} ... [{}]", m_socket->get_host_name(), hash, 
+                                        quill::utility::to_hex(reader.data() + reader.get_pos(), max_size), reader.size());
+                } else {
+                    LOG_TRACE_L2(AVL_LOGGER, "{}, {}, {}", m_socket->get_host_name(), hash, 
+                        quill::utility::to_hex(reader.data() + reader.get_pos(), max_size));
+                }
 
-            LOG_BACKTRACE(AVL_LOGGER, "{} rpc {} {}", m_name.empty() ? m_socket->get_host_name() : m_name,
-                          method_name(hash), hash);
-            // ZRpc.Update: a short package ends the update for this frame ("assume incompatible version",
-            // on the server only an unused status), the peer stays; other errors are logged
-            try {
+                LOG_BACKTRACE(AVL_LOGGER, "{} rpc {} {}", m_name.empty() ? m_socket->get_host_name() : m_name,
+                              method_name(hash), hash);
                 InternalInvoke(hash, reader);
-            } catch (avledet::util::EndOfStream const &e) {
-                LOG_ERROR(AVL_LOGGER, "Short package in rpc {} from {}: {}", method_name(hash), m_name, e.what());
-                return;
-            } catch (std::exception const &e) {
-                LOG_ERROR(AVL_LOGGER, "Exception in rpc {} from {}: {}", method_name(hash), m_name, e.what());
             }
+        } catch (avledet::util::EndOfStream const &e) {
+            LOG_ERROR(AVL_LOGGER, "Short package in rpc {} from {}: {}", method_name(hash), m_name, e.what());
+            return;
+        } catch (std::exception const &e) {
+            LOG_ERROR(AVL_LOGGER, "Exception in rpc {} from {}: {}", method_name(hash), m_name, e.what());
         }
         
         if (AVL_CONFIG.m_replay_mode == ReplayMode::CAPTURE) {
