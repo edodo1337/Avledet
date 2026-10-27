@@ -1001,18 +1001,19 @@ float GeoManager::GetDeepNorthHeight(float wx, float wy, VUtils::Color &mask)
 {
     float wx2 = wx;
     float wy2 = wy;
-    float num = this->GetBaseHeight(wx, wy) + 0.1f;
+    // the IL keeps base + 0.1f on the stack (dup): Mono divides the unrounded double below
+    double num = (double)this->GetBaseHeight(wx, wy) + (double)0.1f;
     wx = (float)((double)wx + 100000.0 + (double)this->m_offset3);
     wy = (float)((double)wy + 100000.0 + (double)this->m_offset3);
     double num2 = (double)wx;
     double num3 = (double)wy;
     float num4 = (float)((double)VUtils::Math::PerlinNoise(num2 * 0.009999999776482582, num3 * 0.009999999776482582) * (double)VUtils::Math::PerlinNoise(num2 * 0.019999999552965164, num3 * 0.019999999552965164));
     num4 = (float)((double)num4 + (double)VUtils::Math::PerlinNoise(num2 * 0.05000000074505806, num3 * 0.05000000074505806) * (double)VUtils::Math::PerlinNoise(num2 * 0.10000000149011612, num3 * 0.10000000149011612) * (double)num4 * 0.5);
-    float num5 = num;
+    float num5 = (float) num;
     num5 = (float)((double)num5 + (double)num4 * 0.10000000149011612);
     float num6 = 0.15f;
     float num7 = (float)((double)num5 - (double)num6);
-    float num8 = (float)std::clamp((double)num / 0.4000000059604645, 0.0, 1.0);
+    float num8 = (float)std::clamp(num / 0.4000000059604645, 0.0, 1.0);
     if (num7 > 0.0f) {
         num5 = (float)((double)num5 - (double)num7 * ((1.0 - (double)num8) * 0.75));
     }
