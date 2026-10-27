@@ -450,13 +450,14 @@ void DungeonGenerator::PlaceDoors(VUtils::Random::State &state)
                      roomConnection.get().m_connection.get().m_type);
         } else if ((doorDef->m_chance <= 0 || state.value() <= doorDef->m_chance)
                    && (doorDef->m_chance > 0 || state.value() <= this->m_dungeon.m_door_chance)) {
-            auto global = VUtils::Physics::LocalToGlobal(
-                    roomConnection.get().m_pos, roomConnection.get().m_rot, Vector3f::ZERO, Quaternion::IDENTITY);
-
+            // Instantiate(door prefab, connection pose): the parts are its children, their poses come from
+            // the native hierarchy under the normalized root rotation
+            Vector3f const one(1, 1, 1);
+            auto rootRot = avledet::unity::Normalize(roomConnection.get().m_rot);
             for (auto &&view : doorDef->m_views) {
-                auto &&zdo = ZdoManager::instance().Instantiate(view.m_prefabHash,
-                                                                global.first + global.second * view.m_pos);
-                zdo->set_rotation(global.second * view.m_rot);
+                auto &&zdo = ZdoManager::instance().Instantiate(
+                        view.m_prefabHash, avledet::unity::ToWorld(roomConnection.get().m_pos, rootRot, one, view.m_pos));
+                zdo->set_rotation(avledet::unity::ToWorld(rootRot, one, view.m_rot));
                 ZoneManager::instance().AwakeRandom(state, *zdo, m_random_damage);
             }
             num++;
