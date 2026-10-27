@@ -446,6 +446,7 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
     void ExpireLifetimes(bool all);
 
     void GlobalKeyAdd(std::string_view keyStr, bool saveServerOption = true);
+    void RegenerateLocations();
     // world modifier key as a scalar ("eventrate 200" -> 2), 1 when not set (Game.trySetScalarKey)
     float ScalarKey(std::string_view key) const;
     bool GlobalKeyRemove(std::string_view keyStr, bool saveServerOption = true);

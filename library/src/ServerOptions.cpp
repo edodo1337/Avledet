@@ -217,6 +217,11 @@ bool ServerOptions::Run(std::string_view line)
                          "TeleportAll", "NoPseudoDrops", "NoBuildingFall", "NoHeavySnow", "AllHeavySnow", "Preset"})
             if (zones.GlobalKeyRemove(key))
                 zones.SendGlobalKeys();
+    } else if (name == "genloc") {
+        if (args.size() >= 2 && Lower(args[1]) == "alt")
+            LOG_WARNING(AVL_LOGGER, "genloc alt (alt biome regeneration) is not supported");
+        else
+            zones.RegenerateLocations();
     } else if (name == "setworldpreset") {
         auto preset = args.size() >= 2 ? ParseEnum(WORLD_PRESETS, args[1]) : "";
         if (preset.empty())

@@ -1168,6 +1168,16 @@ void ZoneManager::PostGeoInit()
     }
 }
 
+// genloc: ClearNonPlacedLocations, then the placement of every location type again
+void ZoneManager::RegenerateLocations()
+{
+    std::erase_if(m_generatedFeatures, [&](auto &&pair) { return !m_generatedZones.contains(pair.first); });
+    for (auto &&loc : m_features)
+        PrepareFeatures(*loc.get());
+    LOG_INFO(AVL_LOGGER, "Locations regenerated: {}", m_generatedFeatures.size());
+    SendLocationIcons();
+}
+
 // private
 // Location placement as in vanilla 1.0 (ZoneSystem.GenerateLocationsTimeSliced):
 // zones come from random biome grid points, 6 tries per zone, alt biome checks.
