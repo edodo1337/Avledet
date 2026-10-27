@@ -500,30 +500,40 @@ bool Heightmap::GetWorldNormal(Vector3f worldPos, Vector3f &normal)
 
 bool Heightmap::GetGroundData(Vector3f worldPos, float &height, Vector3f &normal)
 {
-    // vertex (x, y) is at zone center + (x - 32, y - 32), cell split by diagonal (x+1, y)-(x, y+1)
+    // vanilla raycasts the collision mesh: vertex (x, y) at zone center + (x - 32, y - 32), triangles
+    // (v00, v01, v10) and (v10, v01, v11). The float steps of PhysX RayTriOverlapT and computeImpactData
+    // for a ray going down (det is 1): point = p1 * u + p2 * v + p0 * (1 - u - v)
     Vector3f local = worldPos - ZoneManager::ZoneToWorldPos(this->m_zone);
-    float fx       = local.x + (ZoneManager::UNITS_PER_ZONE / 2);
-    float fy       = local.z + (ZoneManager::UNITS_PER_ZONE / 2);
+    int const half = ZoneManager::UNITS_PER_ZONE / 2;
+    float fx       = local.x + half;
+    float fy       = local.z + half;
     if (fx < 0 || fy < 0 || fx > E_WIDTH - 1 || fy > E_WIDTH - 1)
         return false;
 
     int x = std::min((int) fx, E_WIDTH - 2);
     int y = std::min((int) fy, E_WIDTH - 2);
-    fx -= x;
-    fy -= y;
+    // tvec = origin - v00 in the mesh space
+    float tx = local.x - (float) (x - half);
+    float tz = local.z - (float) (y - half);
 
     float h00 = this->m_heights[y * E_WIDTH + x];
     float h10 = this->m_heights[y * E_WIDTH + x + 1];
     float h01 = this->m_heights[(y + 1) * E_WIDTH + x];
     float h11 = this->m_heights[(y + 1) * E_WIDTH + x + 1];
 
-    if (fx + fy <= 1) {
-        height = h00 + fx * (h10 - h00) + fy * (h01 - h00);
-        normal = Vector3f(h00 - h10, 1, h00 - h01).normal();
+    if (tx + tz <= 1) {
+        float u = tz, v = tx, w = 1.f - u - v;
+        height  = (h01 * u + h10 * v) + h00 * w;
+        normal  = Vector3f(h00 - h10, 1, h00 - h01);
     } else {
-        height = h11 + (1 - fx) * (h01 - h11) + (1 - fy) * (h10 - h11);
-        normal = Vector3f(h01 - h11, 1, h10 - h11).normal();
+        float bx = local.x - (float) (x + 1 - half);// tvec.x from v10
+        float u = -bx, v = -(-tz - bx), w = 1.f - u - v;
+        height = (h01 * u + h11 * v) + h10 * w;
+        normal = Vector3f((h10 - h11) - (h10 - h01), 1, h10 - h11);
     }
+    // PxVec3::normalize multiplies by the reciprocal
+    float m = std::sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+    normal  = normal * (1.f / m);
     return true;
 }
 
