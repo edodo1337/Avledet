@@ -1,4 +1,5 @@
 #include "RandomSpawn.h"
+#include "ZoneManager.h"
 #include "GeoManager.h"
 #include "Types.h"
 #include <type_traits>
@@ -135,6 +136,15 @@ namespace avledet::gen {
             auto toggles = readToggles();
             randoms.m_colliders.emplace_back(owner, std::move(toggles), phys::Collider::read(reader));
         }
+
+        auto conditionals = reader.read<std::int32_t>();
+        for (int i = 0; i < conditionals; i++) {
+            Conditional cond;
+            cond.m_key                = reader.read<std::string>();
+            cond.m_disableOnCondition = reader.read<bool>();
+            cond.m_views              = reader.read<decltype(cond.m_views)>();
+            randoms.m_conditionals.push_back(std::move(cond));
+        }
         return randoms;
     }
 
@@ -243,6 +253,15 @@ namespace avledet::gen {
                     active[v] = false;
             if (result)
                 result->m_picked.push_back(picked == -1 ? 0 : object.m_entries[picked].m_objectId);
+        }
+
+        // ConditionalObject.ShouldBeVisible at Awake; with no key it shows up later on its own
+        for (auto &&cond : m_conditionals) {
+            bool visible = cond.m_key.empty()
+                           || ZoneManager::instance().GetGlobalKey(cond.m_key) == !cond.m_disableOnCondition;
+            if (!visible)
+                for (auto v : cond.m_views)
+                    active[v] = false;
         }
 
         return active;

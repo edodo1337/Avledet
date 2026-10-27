@@ -143,6 +143,8 @@ void probe_dump(char const *dir)
             zones.insert({zx, zy});
             ZoneManager::instance().GenerateZoneBlocking(ZoneID((std::int16_t) zx, (std::int16_t) zy));
         }
+        // the vanilla probe dumps minutes later, the short lived objects are gone by then
+        ZoneManager::instance().ExpireLifetimes(true);
 
         std::ofstream out(root / "zones.txt");
         out.precision(9);

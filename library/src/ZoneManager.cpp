@@ -218,6 +218,13 @@ void ZoneManager::PostPrefabInit()
                     = AwakeDraws {draws[0], draws[3], j.at("damageIndex"), j.at("health")};
         }
 
+        std::ifstream lifeIn("lifetimes.json");
+        if (!lifeIn)
+            throw std::runtime_error("lifetimes.json missing (dumped from the 1.0 server)");
+        auto lifetimes = nlohmann::json::parse(lifeIn);
+        for (auto &&[name, seconds] : lifetimes.items())
+            m_lifetimes[avledet::util::get_stable_hash(name)] = std::chrono::duration<float>(seconds.get<float>());
+
         std::ifstream modsIn("prefab_terrainmods.json");
         if (!modsIn)
             throw std::runtime_error("prefab_terrainmods.json missing (dumped from the 1.0 server)");
@@ -421,6 +428,14 @@ static bool IsServerOption(std::string_view key)
     return false;
 }
 
+bool ZoneManager::GetGlobalKey(std::string_view name) const
+{
+    auto lower = [](char c) { return (char) std::tolower((unsigned char) c); };
+    return std::ranges::any_of(m_globalKeys, [&](std::string_view key) {
+        return std::ranges::equal(key.substr(0, key.find(' ')), name, {}, lower, lower);
+    });
+}
+
 // public
 // ZoneSystem.Save of the .db2: one gzipped package
 void ZoneManager::Save(DataWriter &out)
@@ -519,9 +534,24 @@ void ZoneManager::Load(DataReader &in, std::vector<std::string> const &startingK
 }
 
 // private
+void ZoneManager::ExpireLifetimes(bool all)
+{
+    auto now = std::chrono::steady_clock::now();
+    std::erase_if(m_dying, [&](auto &&dying) {
+        if (!all && dying.second > now)
+            return false;
+        if (auto zdo = ZdoManager::instance().find_zdo(dying.first))
+            ZdoManager::instance().DestroyZDO(zdo);
+        return true;
+    });
+}
+
 void ZoneManager::Update()
 {
     ZoneScoped;
+
+    if (!m_dying.empty() && VUtils::run_periodic<struct periodic_lifetimes>(500ms))
+        ExpireLifetimes(false);
 
 #if AVL_IS_ON(AVL_ZONE_GENERATION)
     // TODO 100ms seems a tad too frequent
@@ -1396,6 +1426,11 @@ void ZoneManager::AwakeRandom(VUtils::Random::State &state, ZDO &zdo, bool rando
 
 void ZoneManager::RegisterSpawned(ZDO &zdo, float scale)
 {
+    // Gibber and TimedDestruction on Awake destroy the object soon after it spawns
+    if (auto life = m_lifetimes.find(zdo.get_prefab().get().m_hash); life != m_lifetimes.end())
+        m_dying.emplace_back(zdo.get_id(), std::chrono::steady_clock::now()
+                                                   + std::chrono::duration_cast<std::chrono::steady_clock::duration>(life->second));
+
     auto itr = m_prefabMods.find(zdo.get_prefab().get().m_hash);
     if (itr == m_prefabMods.end())
         return;

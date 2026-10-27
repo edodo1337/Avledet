@@ -96,6 +96,14 @@ namespace avledet::gen {
         std::vector<Toggles> m_visualSnaps;
         // colliders for the vegetation raycasts: owner view (-1 visual), toggles, shape
         std::vector<std::tuple<std::int32_t, Toggles, phys::Collider>> m_colliders;
+        // ConditionalObject: views under m_enableObject, off unless the global key condition holds
+        struct Conditional
+        {
+            std::string m_key;
+            bool m_disableOnCondition;
+            std::vector<std::uint16_t> m_views;
+        };
+        std::vector<Conditional> m_conditionals;
 
         static Randoms parse(util::Reader &reader);
 

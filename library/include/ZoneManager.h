@@ -259,6 +259,9 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
 
     // Which Zones have already been generated
     avledet::util::Set<ZoneID> m_generatedZones;
+    // seconds a spawned prefab lives (lifetimes.json) and the generated objects waiting to go
+    avledet::util::Map<avledet::util::Hash, std::chrono::duration<float>> m_lifetimes;
+    std::vector<std::pair<ZDOID, std::chrono::steady_clock::time_point>> m_dying;
 #else
     /*
 	enum class SigFeature : std::uint8_t {
@@ -375,10 +378,16 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
     // startingKeys: server options of the .fwl2, active as global keys
     void Load(DataReader &reader, std::vector<std::string> const &startingKeys);
 
+    // destroys generated objects whose lifetime ran out (all: as if time had passed)
+    void ExpireLifetimes(bool all);
+
     bool has_global_key(std::string_view key) const
     {
         return m_globalKeys.contains(key);
     }
+
+    // ZoneSystem.GetGlobalKey: by the key name, case insensitive, a value after a space ignored
+    bool GetGlobalKey(std::string_view name) const;
 
     //void RegenerateZone(ZoneID zone);
 
