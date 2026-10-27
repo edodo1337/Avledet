@@ -168,11 +168,13 @@ void Peer::update()
 
             LOG_BACKTRACE(AVL_LOGGER, "{} rpc {} {}", m_name.empty() ? m_socket->get_host_name() : m_name,
                           method_name(hash), hash);
-            // ZRpc.Update: a short package drops the peer (incompatible version), other errors are logged
+            // ZRpc.Update: a short package ends the update for this frame ("assume incompatible version",
+            // on the server only an unused status), the peer stays; other errors are logged
             try {
                 InternalInvoke(hash, reader);
-            } catch (avledet::util::EndOfStream const &) {
-                throw;
+            } catch (avledet::util::EndOfStream const &e) {
+                LOG_ERROR(AVL_LOGGER, "Short package in rpc {} from {}: {}", method_name(hash), m_name, e.what());
+                return;
             } catch (std::exception const &e) {
                 LOG_ERROR(AVL_LOGGER, "Exception in rpc {} from {}: {}", method_name(hash), m_name, e.what());
             }

@@ -87,7 +87,8 @@ void SyncedList::Remove(std::string_view s)
     }
 }
 
+// vanilla ListContainsId: the bare id, "Steam_<id>" and the display form "V_<id>"
 bool SyncedList::ContainsId(std::string_view host)
 {
-    return Contains(host) || Contains("Steam_" + std::string(host));
+    return Contains(host) || Contains("Steam_" + std::string(host)) || Contains("V_" + std::string(host));
 }

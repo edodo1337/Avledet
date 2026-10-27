@@ -35,7 +35,7 @@ static void RefuseNotAdmin(Peer::Ptr const &peer)
     peer->ConsoleMessage("You are not admin");
 }
 
-// vanilla InternalKick: by host ("Steam_" prefix allowed), then by player name
+// vanilla InternalKick: by host ("Steam_" or the display "V_" prefix allowed), then by player name
 Peer::Ptr NetManager::Kick(std::string_view user)
 {
     if (user.empty())
@@ -43,6 +43,8 @@ Peer::Ptr NetManager::Kick(std::string_view user)
     auto id = user;
     if (id.starts_with("Steam_"))
         id.remove_prefix(6);
+    else if (id.starts_with("V_"))
+        id.remove_prefix(2);
     auto &&peer = FindPeerByHost(id);
     if (!peer)
         peer = FindPeerByName(user);

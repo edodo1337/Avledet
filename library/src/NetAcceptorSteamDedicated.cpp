@@ -146,17 +146,17 @@ AcceptorSteam::AcceptorSteam(std::string bind_addr) :
     SteamGameServer()->SetProduct("valheim");
     SteamGameServer()->SetModDir("valheim");
     SteamGameServer()->SetDedicatedServer(true);
-    SteamGameServer()->SetMaxPlayerCount(64);
     SteamGameServer()->LogOnAnonymous();
 
-    SteamGameServer()->SetGameTags(("\"gameversion\"=\"" + std::string(VConstants::GAME)
-                                    + "\",\"networkversion\"=\"" + std::to_string(VConstants::NETWORK) + "\"")
-                                           .c_str());
-
-    SteamGameServer()->SetServerName("avledet");
-    SteamGameServer()->SetMapName("avledet");
-    SteamGameServer()->SetPasswordProtected(false);
-    SteamGameServer()->SetAdvertiseServerActive(false);
+    // vanilla ZSteamMatchmaking.RegisterServer: the server browser reads these. Tags unquoted like
+    // StringUtils.EncodeDictionaryAsString(.., false); the "m" world modifiers tag is not sent yet
+    SteamGameServer()->SetServerName(AVL_CONFIG.m_server_name.c_str());
+    SteamGameServer()->SetMapName(AVL_CONFIG.m_server_name.c_str());
+    SteamGameServer()->SetMaxPlayerCount((int) AVL_CONFIG.m_player_limit);
+    SteamGameServer()->SetPasswordProtected(!AVL_CONFIG.m_server_password.empty());
+    SteamGameServer()->SetGameTags(
+            ("g=" + std::string(VConstants::GAME) + ",n=" + std::to_string(VConstants::NETWORK)).c_str());
+    SteamGameServer()->SetAdvertiseServerActive(AVL_CONFIG.m_server_public);
 
     auto auth = SteamGameServerNetworkingSockets()->InitAuthentication();
 
