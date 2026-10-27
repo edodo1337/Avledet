@@ -90,6 +90,10 @@ public:
     std::string m_world_savedir {};// vanilla -savedir: worlds in <savedir>/worlds_local/<world>/
     bool m_world_pregenerate;
     std::chrono::seconds m_world_save_interval {};// set to 0 to disable
+    // vanilla -backups, -backupshort, -backuplong (dedicated defaults 4, 2 h, 12 h)
+    int m_world_backups {};
+    std::chrono::seconds m_world_backup_short {};
+    std::chrono::seconds m_world_backup_long {};
     bool m_world_gen_features {};
     bool m_world_gen_vegetation {};
     bool m_world_gen_creatures {};

@@ -11,20 +11,13 @@
 #include "Avledet.h"
 #include "WorldManager.h"
 #include "ZoneManager.h"
-
-static std::string Lower(std::string_view s)
-{
-    std::string out(s);
-    for (auto &&c : out)
-        c = (char) std::tolower((unsigned char) c);
-    return out;
-}
+#include "VUtilsString.h"
 
 // List.ContainsString(s, InvariantCultureIgnoreCase)
 static bool Contains(std::vector<std::string> const &list, std::string_view s)
 {
-    auto lower = Lower(s);
-    return std::ranges::any_of(list, [&](std::string const &k) { return Lower(k) == lower; });
+    auto lower = avledet::lexicon::to_lower(s);
+    return std::ranges::any_of(list, [&](std::string const &k) { return avledet::lexicon::to_lower(k) == lower; });
 }
 
 // Enum.TryParse(s, ignoreCase): a name or a number, the name back or empty
@@ -34,7 +27,7 @@ static std::string ParseEnum(std::vector<std::string_view> const &names, std::st
     if (!s.empty() && std::from_chars(s.data(), s.data() + s.size(), n).ptr == s.data() + s.size())
         return n >= 0 && n < (int) names.size() ? std::string(names[n]) : std::string();
     for (auto name : names)
-        if (Lower(name) == Lower(s))
+        if (avledet::lexicon::to_lower(name) == avledet::lexicon::to_lower(s))
             return std::string(name);
     return {};
 }
@@ -112,7 +105,7 @@ void ServerOptions::ReadKeys()
         }
     }
     for (auto &&t : m_toggles)
-        t.m_on = std::ranges::find(keys, Lower(t.m_key)) != keys.end();
+        t.m_on = std::ranges::find(keys, avledet::lexicon::to_lower(t.m_key)) != keys.end();
 }
 
 // SetKeys: every slider sets the keys of its option, toggles that are on their key, then the preset key
@@ -120,20 +113,20 @@ void ServerOptions::SetKeys()
 {
     for (auto &&s : m_sliders)
         for (auto &&key : s.m_settings[s.m_value].second)
-            SetGlobalKey(Lower(key));
+            SetGlobalKey(avledet::lexicon::to_lower(key));
     for (auto &&t : m_toggles)
         if (t.m_on)
-            SetGlobalKey(Lower(t.m_key));
+            SetGlobalKey(avledet::lexicon::to_lower(t.m_key));
 
     std::string text;
     if (std::ranges::any_of(m_sliders, [](Slider const &s) { return s.m_manual; })) {
         for (auto &&s : m_sliders) {
             if (!text.empty())
                 text += ":";
-            text += Lower(s.m_modifier) + "_" + Lower(s.m_settings[s.m_value].first);
+            text += avledet::lexicon::to_lower(s.m_modifier) + "_" + avledet::lexicon::to_lower(s.m_settings[s.m_value].first);
         }
     } else if (m_preset != "Default" && m_preset != "Custom")
-        text = Lower(m_preset);
+        text = avledet::lexicon::to_lower(m_preset);
     if (!text.empty())
         SetGlobalKey("preset " + text);
 }
@@ -141,12 +134,12 @@ void ServerOptions::SetKeys()
 // SetPreset(WorldPresets): the button sets its keys, then OnPresetButton matches the sliders to them
 bool ServerOptions::SetPreset(std::string_view preset)
 {
-    auto it = std::ranges::find_if(m_presets, [&](auto &&p) { return Lower(p.first) == Lower(preset); });
+    auto it = std::ranges::find_if(m_presets, [&](auto &&p) { return avledet::lexicon::to_lower(p.first) == avledet::lexicon::to_lower(preset); });
     if (it == m_presets.end())
         return false;
     auto &&keys = it->second;
     for (auto &&key : keys)
-        SetGlobalKey(Lower(key));
+        SetGlobalKey(avledet::lexicon::to_lower(key));
     for (auto &&s : m_sliders) {
         // TryMatch(keys): the option whose keys are all there, the one with most keys
         int fallback = 0, best = -1, most = 0;
@@ -173,14 +166,14 @@ bool ServerOptions::SetPreset(std::string_view preset)
 bool ServerOptions::SetModifier(std::string_view modifier, std::string_view option)
 {
     for (auto &&s : m_sliders) {
-        if (Lower(s.m_modifier) != Lower(modifier))
+        if (avledet::lexicon::to_lower(s.m_modifier) != avledet::lexicon::to_lower(modifier))
             continue;
         for (int i = 0; i < (int) s.m_settings.size(); i++) {
-            if (Lower(s.m_settings[i].first) != Lower(option))
+            if (avledet::lexicon::to_lower(s.m_settings[i].first) != avledet::lexicon::to_lower(option))
                 continue;
             SetValue(s, i);
             for (auto &&key : s.m_settings[i].second)
-                SetGlobalKey(Lower(key));
+                SetGlobalKey(avledet::lexicon::to_lower(key));
             return true;
         }
     }
@@ -194,7 +187,7 @@ bool ServerOptions::Run(std::string_view line)
         args.emplace_back(part.begin(), part.end());
     if (args.empty())
         return false;
-    auto name = Lower(args[0]);
+    auto name = avledet::lexicon::to_lower(args[0]);
     auto rest = args.size() >= 2 ? std::string(line.substr(args[0].size() + 1)) : std::string();
     auto &&zones = ZoneManager::instance();
 
@@ -207,18 +200,11 @@ bool ServerOptions::Run(std::string_view line)
             zones.SendGlobalKeys();
     } else if (name == "resetworldkeys") {
         // ZoneSystem.ResetWorldKeys: the 41 GlobalKeys before NonServerOption, one RemoveGlobalKey RPC each
-        for (auto key : {"PlayerDamage", "EnemyDamage", "WorldLevel", "EventRate", "ResourceRate", "StaminaRate",
-                         "AdrenalineRate", "EitrRate", "DurabilityRate", "FoodRate", "MoveStaminaRate",
-                         "StaminaRegenRate", "SkillGainRate", "SkillReductionRate", "EnemySpeedSize",
-                         "EnemyLevelUpRate", "CarryWeightRate", "PlayerEvents", "Fire", "DeathKeepEquip",
-                         "DeathDeleteItems", "DeathDeleteUnequipped", "DeathSkillsReset", "DeathKeepInventory",
-                         "NoBuildCost", "NoCraftCost", "AllPiecesUnlocked", "NoWorkbench", "AllRecipesUnlocked",
-                         "WorldLevelLockedTools", "PassiveMobs", "NoMap", "NoPortals", "NoBossPortals", "DungeonBuild",
-                         "TeleportAll", "NoPseudoDrops", "NoBuildingFall", "NoHeavySnow", "AllHeavySnow", "Preset"})
+        for (auto key : ZoneManager::SERVER_OPTION_KEYS)
             if (zones.GlobalKeyRemove(key))
                 zones.SendGlobalKeys();
     } else if (name == "genloc") {
-        if (args.size() >= 2 && Lower(args[1]) == "alt")
+        if (args.size() >= 2 && avledet::lexicon::to_lower(args[1]) == "alt")
             LOG_WARNING(AVL_LOGGER, "genloc alt (alt biome regeneration) is not supported");
         else
             zones.RegenerateLocations();

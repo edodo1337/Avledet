@@ -192,6 +192,9 @@ void ConfigManager::load()
             c(m_world_pregenerate, experimental, "world-pregenerate", false, nullptr);
             r(m_world_save_interval, world, "save-interval", 30min,
               [](std::chrono::seconds val) { return val < 0s; });
+            r(m_world_backups, world, "backups", 4, [](int val) { return val < 0; });
+            r(m_world_backup_short, world, "backup-short", 7200s, [](std::chrono::seconds val) { return val < 5s; });
+            r(m_world_backup_long, world, "backup-long", 43200s, [](std::chrono::seconds val) { return val < 5s; });
             // TODO what should the hot reload behaviour of 'features' changes be?
             //  Generate locations? Place only generated locations?
             c(m_world_gen_features, world, "features", true, nullptr);

@@ -55,7 +55,9 @@ class WorldManager : public avledet::util::IManager<WorldManager>
         std::uint32_t m_save;
         std::uint32_t m_previous;
         std::vector<std::pair<std::string, avledet::util::Bytes>> m_files;// in write order, .ok last
+        bool m_backup = false;// server up long enough for an auto backup
     };
+    static void ConsiderBackup(std::filesystem::path const &dir);
     std::thread m_saveThread;
     std::atomic<bool> m_saveOk;
     std::atomic<bool> m_saveDone;

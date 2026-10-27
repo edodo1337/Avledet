@@ -427,29 +427,10 @@ void ZoneManager::SendLocationIcons(Peer::Ptr peer)
 // ZoneSystem.GetKeyValue below GlobalKeys.NonServerOption: server options, kept in the .fwl2 instead
 static bool IsServerOption(std::string_view key)
 {
-    static std::string_view const options[] = {
-            "playerdamage", "enemydamage", "worldlevel", "eventrate", "resourcerate", "staminarate",
-            "adrenalinerate", "eitrrate", "durabilityrate", "foodrate", "movestaminarate", "staminaregenrate",
-            "skillgainrate", "skillreductionrate", "enemyspeedsize", "enemyleveluprate", "carryweightrate",
-            "playerevents", "fire", "deathkeepequip", "deathdeleteitems", "deathdeleteunequipped",
-            "deathskillsreset", "deathkeepinventory", "nobuildcost", "nocraftcost", "allpiecesunlocked",
-            "noworkbench", "allrecipesunlocked", "worldlevellockedtools", "passivemobs", "nomap", "noportals",
-            "nobossportals", "dungeonbuild", "teleportall", "nopseudodrops", "nobuildingfall", "noheavysnow",
-            "allheavysnow", "preset"};
     auto name = key.substr(0, key.find(' '));
-    for (auto option : options) {
-        if (std::ranges::equal(name, option, [](char a, char b) { return std::tolower(a) == std::tolower(b); }))
-            return true;
-    }
-    return false;
-}
-
-static std::string Lower(std::string_view s)
-{
-    std::string out(s);
-    for (auto &&c : out)
-        c = (char) std::tolower((unsigned char) c);
-    return out;
+    return std::ranges::any_of(ZoneManager::SERVER_OPTION_KEYS, [&](std::string_view option) {
+        return std::ranges::equal(name, option, [](char a, char b) { return std::tolower(a) == std::tolower(b); });
+    });
 }
 
 // ZoneSystem.GetKeyValue: "name value", the name lowercased
@@ -457,7 +438,7 @@ static std::string KeyName(std::string_view key, std::string &value)
 {
     auto space = key.find(' ');
     value      = space != std::string_view::npos && space > 0 ? std::string(key.substr(space + 1)) : "";
-    return Lower(space != std::string_view::npos && space > 0 ? key.substr(0, space) : key);
+    return avledet::lexicon::to_lower(space != std::string_view::npos && space > 0 ? key.substr(0, space) : key);
 }
 
 static std::string KeyLine(std::string const &name, std::string const &value)
@@ -468,7 +449,7 @@ static std::string KeyLine(std::string const &name, std::string const &value)
 // ZoneSystem.GlobalKeyAdd: one entry per key name, server options also go to the world's starting keys
 void ZoneManager::GlobalKeyAdd(std::string_view keyStr, bool saveServerOption)
 {
-    auto lower = Lower(keyStr);
+    auto lower = avledet::lexicon::to_lower(keyStr);
     std::string value;
     auto name    = KeyName(lower, value);
     auto &&world = WorldManager::instance().GetWorld();
@@ -504,7 +485,7 @@ bool ZoneManager::GlobalKeyRemove(std::string_view keyStr, bool saveServerOption
 
 bool ZoneManager::GetGlobalKey(std::string_view name) const
 {
-    return m_globalKeysValues.contains(Lower(name));
+    return m_globalKeysValues.contains(avledet::lexicon::to_lower(name));
 }
 
 // public

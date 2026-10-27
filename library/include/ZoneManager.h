@@ -445,6 +445,17 @@ class ZoneManager : public avledet::util::IManager<ZoneManager>
     // destroys generated objects whose lifetime ran out (all: as if time had passed)
     void ExpireLifetimes(bool all);
 
+    // GlobalKeys before NonServerOption: world modifiers, kept in the world's starting keys
+    static constexpr std::string_view SERVER_OPTION_KEYS[] = {
+            "playerdamage", "enemydamage", "worldlevel", "eventrate", "resourcerate", "staminarate",
+            "adrenalinerate", "eitrrate", "durabilityrate", "foodrate", "movestaminarate", "staminaregenrate",
+            "skillgainrate", "skillreductionrate", "enemyspeedsize", "enemyleveluprate", "carryweightrate",
+            "playerevents", "fire", "deathkeepequip", "deathdeleteitems", "deathdeleteunequipped",
+            "deathskillsreset", "deathkeepinventory", "nobuildcost", "nocraftcost", "allpiecesunlocked",
+            "noworkbench", "allrecipesunlocked", "worldlevellockedtools", "passivemobs", "nomap", "noportals",
+            "nobossportals", "dungeonbuild", "teleportall", "nopseudodrops", "nobuildingfall", "noheavysnow",
+            "allheavysnow", "preset"};
+
     void GlobalKeyAdd(std::string_view keyStr, bool saveServerOption = true);
     void RegenerateLocations();
     // world modifier key as a scalar ("eventrate 200" -> 2), 1 when not set (Game.trySetScalarKey)

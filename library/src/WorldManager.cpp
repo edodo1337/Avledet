@@ -186,16 +186,76 @@ void WorldManager::Save(std::filesystem::path const &dir)
     m_saveDone             = false;
     m_saveThreadStart      = std::chrono::steady_clock::now();
     m_saveSerializeSeconds = std::chrono::duration<float>(m_saveThreadStart - start).count();
+    // ZNet.ConsiderAutoBackup: not before 20 minutes of the session
+    job.m_backup           = Avledet::instance().Elapsed() >= std::chrono::seconds(1200);
     m_saveThread           = std::thread([this, job = std::move(job)] {
         m_saveOk   = WriteSave(job);
         m_saveDone = true;
     });
 }
 
+// SaveSystem.ConsiderBackup: copies of the world dir, <world>_backup_auto-yyyyMMdd-HHmmss, before the new save.
+// A new one when the newest is older than backup-short; the newest is replaced unless the second newest is
+// older than backup-long, then the oldest goes (or a new one is added below the count).
+void WorldManager::ConsiderBackup(std::filesystem::path const &dir)
+{
+    namespace fs = std::filesystem;
+    int count = AVL_CONFIG.m_world_backups == 1 ? 0 : AVL_CONFIG.m_world_backups;
+    if (count <= 0 || !fs::exists(dir))
+        return;
+    std::error_code err;
+    auto prefix   = dir.filename().string() + "_backup_auto-";
+    auto modified = [&](fs::path const &p) {
+        auto newest = fs::file_time_type::min();
+        for (auto &&f : fs::directory_iterator(p, err))
+            newest = std::max(newest, fs::last_write_time(f.path(), err));
+        return newest;
+    };
+    std::vector<std::pair<fs::file_time_type, fs::path>> backups;
+    for (auto &&entry : fs::directory_iterator(dir.parent_path(), err))
+        if (entry.is_directory() && entry.path().filename().string().starts_with(prefix))
+            backups.emplace_back(modified(entry.path()), entry.path());
+    std::ranges::sort(backups, std::greater<> {});
+    if (backups.size() > (std::size_t) count)
+        backups.resize(count);
+
+    auto now = fs::file_time_type::clock::now();
+    std::optional<fs::path> replace;
+    if (!backups.empty()) {
+        if (!(now - AVL_CONFIG.m_world_backup_short > backups[0].first))
+            return;
+        if (backups.size() >= 2) {
+            if (now - AVL_CONFIG.m_world_backup_long > backups[1].first) {
+                if (backups.size() >= (std::size_t) count)
+                    replace = backups.back().second;
+            } else
+                replace = backups[0].second;
+        }
+    }
+    if (replace)
+        fs::remove_all(*replace, err);
+
+    auto t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm local {};
+    localtime_r(&t, &local);
+    char date[32];
+    std::strftime(date, sizeof(date), "%Y%m%d-%H%M%S", &local);
+    auto target = dir.parent_path() / (prefix + date);
+    fs::create_directories(target, err);
+    for (auto &&f : fs::directory_iterator(dir, err)) {
+        auto ext = f.path().extension().string();
+        if (ext == ".fwl2" || ext == ".db2" || ext == ".chunks" || ext == ".ok" || ext == ".chunk")
+            fs::copy_file(f.path(), target / f.path().filename(), fs::copy_options::overwrite_existing, err);
+    }
+    LOG_INFO(AVL_LOGGER, "Backup created in {}", target.filename().string());
+}
+
 bool WorldManager::WriteSave(SaveJob const &job)
 {
     auto start = std::chrono::steady_clock::now();
     std::error_code err;
+    if (job.m_backup)
+        ConsiderBackup(job.m_dir);
     std::filesystem::create_directories(job.m_dir, err);
 
     for (auto &&[name, bytes] : job.m_files) {
