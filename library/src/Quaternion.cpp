@@ -242,14 +242,10 @@ namespace avledet::util::CSU {
         return Quaternion(q[0] / n, q[1] / n, q[2] / n, q[3] / n);
     }
 
+    // UnityPlayer.so Quaternion.Inverse: the conjugate, no division by the norm
     Quaternion Quaternion::inverse(Quaternion rotation)
     {
-        float lengthSq = rotation.length_squared();
-        if (lengthSq != 0.0) {
-            float i = 1.0f / lengthSq;
-            return Quaternion(rotation.xyz() * -i, rotation.w * i);
-        }
-        return rotation;
+        return Quaternion(-rotation.x, -rotation.y, -rotation.z, rotation.w);
     }
 
 }// namespace avledet::util::CSU

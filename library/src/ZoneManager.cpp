@@ -14,6 +14,7 @@
 #include "PrefabManager.h"
 #include "RouteManager.h"
 #include "VUtilsResource.h"
+#include "UnityTransform.h"
 #include "ZDOManager.h"
 #include <algorithm>
 #include <cctype>
@@ -1862,11 +1863,20 @@ void ZoneManager::GenerateFeature(Feature const &location, avledet::util::Hash s
 
             if (dungeon.m_use_custom_interior_transform) {
                 // vanilla SpawnLocation moves the interior transform so the generator lands in the zone
-                // center, through Matrix4x4.Rotate(inv) * Translate column 3 (= inv * v) and back
+                // center: column 3 of Matrix4x4.Rotate(inv) * Translate(v), the matrix entries are floats.
+                // localRotation = Quaternion.Inverse(rot), the setter normalizes it
                 Vector3f zonePos = ZoneToWorldPos(WorldToZonePos(pos));
-                Quaternion inv(-rot.x, -rot.y, -rot.z, rot.w);// Unity Quaternion.Inverse
-                Vector3f local = inv * (zonePos + dungeon.m_interior_position + dungeon.m_original_position - pos);
-                local.y        = dungeon.m_interior_position.y;
+                Quaternion inv   = avledet::unity::Normalize(Quaternion(-rot.x, -rot.y, -rot.z, rot.w));
+                Vector3f v       = zonePos + dungeon.m_interior_position + dungeon.m_original_position - pos;
+                float x2 = rot.x * -2.f, y2 = rot.y * -2.f, z2 = rot.z * -2.f;
+                float xx = -rot.x * x2, yy = -rot.y * y2, zz = -rot.z * z2;
+                float xy = -rot.x * y2, xz = -rot.x * z2, yz = -rot.y * z2;
+                float wx = rot.w * x2, wy = rot.w * y2, wz = rot.w * z2;
+                float m00 = (float) (1.0 - ((double) yy + zz)), m01 = xy - wz, m02 = xz + wy;
+                float m20 = xz - wy, m21 = yz + wx, m22 = (float) (1.0 - ((double) xx + yy));
+                Vector3f local((float) ((double) m00 * v.x + (double) m01 * v.y + (double) m02 * v.z),
+                               dungeon.m_interior_position.y,
+                               (float) ((double) m20 * v.x + (double) m21 * v.y + (double) m22 * v.z));
 
                 zdo = ZdoManager::instance().Instantiate(piece.m_prefabHash, pos + rot * local);
                 genRot = rot * inv;
