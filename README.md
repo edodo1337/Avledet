@@ -1,5 +1,8 @@
 # Avledet
 
+> This fork ports Avledet to Valheim 1.0.20 and checks it against the vanilla dedicated server, see
+> [port/README.md](port/README.md).
+
 Valheim server written in modern C++. 
 
 Low resource usage. Includes features not present in Vanilla.

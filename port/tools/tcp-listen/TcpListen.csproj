@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net462</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <Nullable>disable</Nullable>
+    <!-- paths to game and BepInEx dlls, passed on build -->
+    <Managed Condition="'$(Managed)' == ''">/managed</Managed>
+    <BepCore Condition="'$(BepCore)' == ''">/bepcore</BepCore>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <PackageReference Include="Krafs.Publicizer" Version="2.3.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Publicize Include="assembly_valheim" />
+    <Publicize Include="assembly_utils" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="$(BepCore)/BepInEx.dll" Private="false" />
+    <Reference Include="$(BepCore)/0Harmony.dll" Private="false" />
+    <Reference Include="$(Managed)/assembly_valheim.dll" Private="false" />
+    <Reference Include="$(Managed)/assembly_utils.dll" Private="false" />
+    <Reference Include="$(Managed)/assembly_guiutils.dll" Private="false" />
+    <Reference Include="$(Managed)/SoftReferenceableAssets.dll" Private="false" />
+    <Reference Include="$(Managed)/UnityEngine*.dll" Private="false" />
+  </ItemGroup>
+</Project>
