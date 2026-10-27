@@ -40,6 +40,110 @@ static std::vector<std::string_view> const WORLD_MODIFIER_OPTIONS = {
         "Default", "None", "Less", "MuchLess", "More", "MuchMore", "Casual", "VeryEasy", "Easy", "Hard", "VeryHard",
         "Hardcore", "Most"};
 
+// enum GlobalKeys in order (the first 41 are the server options)
+static std::vector<std::string_view> const GLOBAL_KEYS = {
+        "PlayerDamage", "EnemyDamage", "WorldLevel", "EventRate", "ResourceRate", "StaminaRate", "AdrenalineRate",
+        "EitrRate", "DurabilityRate", "FoodRate", "MoveStaminaRate", "StaminaRegenRate", "SkillGainRate",
+        "SkillReductionRate", "EnemySpeedSize", "EnemyLevelUpRate", "CarryWeightRate", "PlayerEvents", "Fire",
+        "DeathKeepEquip", "DeathDeleteItems", "DeathDeleteUnequipped", "DeathSkillsReset", "DeathKeepInventory",
+        "NoBuildCost", "NoCraftCost", "AllPiecesUnlocked", "NoWorkbench", "AllRecipesUnlocked",
+        "WorldLevelLockedTools", "PassiveMobs", "NoMap", "NoPortals", "NoBossPortals", "DungeonBuild",
+        "TeleportAll", "NoPseudoDrops", "NoBuildingFall", "NoHeavySnow", "AllHeavySnow", "Preset",
+        "NonServerOption", "defeated_eikthyr", "defeated_dragon", "defeated_goblinking", "defeated_gdking",
+        "defeated_bonemass", "activeBosses", "StoneCircle", "KilledTroll", "killed_surtling", "KilledBat",
+        "AshlandsOcean", "Count"};
+
+// Enum.TryParse(ignoreCase) plus the ToString check: the enum number, -1 when it is not a name
+static int EnumIndex(std::vector<std::string_view> const &names, std::string_view s)
+{
+    auto lower = avledet::lexicon::to_lower(s);
+    for (std::size_t i = 0; i < names.size(); i++)
+        if (avledet::lexicon::to_lower(names[i]) == lower)
+            return (int) i;
+    return -1;
+}
+
+std::string ServerOptions::EscapeTag(std::string_view s)
+{
+    std::string out;
+    for (char c : s) {
+        if (c == '"' || c == '\\' || c == ',' || c == '=')
+            out += '\\';
+        out += c;
+    }
+    return out;
+}
+
+std::optional<std::string> ServerOptions::ModifiersTag(std::vector<std::string> const &keys)
+{
+    // a Dictionary: a repeated key keeps its place and takes the new value
+    std::vector<std::pair<std::string, std::optional<std::string>>> kvp;
+    for (auto &&key : keys) {
+        auto space = key.find(' ');
+        auto name  = key.substr(0, space);
+        std::optional<std::string> value;
+        if (space != std::string::npos)
+            value = key.substr(space + 1);
+        int index = EnumIndex(GLOBAL_KEYS, name);
+        if (index < 0)
+            return std::nullopt;
+        if (GLOBAL_KEYS[index] == "Preset") {
+            if (!value)
+                return std::nullopt;
+            // each part: Modifier_Option as numbers, or a WorldPresets number
+            std::string compact;
+            bool first = true;
+            for (auto &&range : std::views::split(*value, ':')) {
+                std::string_view part(range.begin(), range.end());
+                if (!first)
+                    compact += ':';
+                first = false;
+                // IndexOf('_', start) looks past the part: an "_" of a later part makes vanilla throw
+                auto under = value->find('_', part.data() - value->data());
+                if (under != std::string::npos && under >= (std::size_t) (part.data() - value->data()) + part.size())
+                    return std::nullopt;
+                under = part.find('_');
+                if (under == std::string_view::npos) {
+                    int preset = EnumIndex(WORLD_PRESETS, part);
+                    if (preset < 0)
+                        return std::nullopt;
+                    compact += std::to_string(preset);
+                } else {
+                    int modifier = EnumIndex(WORLD_MODIFIERS, part.substr(0, under));
+                    int option   = EnumIndex(WORLD_MODIFIER_OPTIONS, part.substr(under + 1));
+                    if (modifier < 0 || option < 0)
+                        return std::nullopt;
+                    compact += std::to_string(modifier) + "_" + std::to_string(option);
+                }
+            }
+            value = compact;
+        }
+        auto id = std::to_string(index);
+        auto it = std::ranges::find_if(kvp, [&](auto &&p) { return p.first == id; });
+        if (it != kvp.end())
+            it->second = value;
+        else
+            kvp.emplace_back(id, value);
+    }
+    std::string tag;
+    for (auto &&[k, v] : kvp) {
+        if (!tag.empty())
+            tag += ',';
+        tag += EscapeTag(k);
+        if (v)
+            tag += "=" + EscapeTag(*v);
+    }
+    return tag;
+}
+
+std::string ServerOptions::SteamTags(std::vector<std::string> const &startingKeys)
+{
+    auto tags = "g=" + EscapeTag(VConstants::GAME) + ",n=" + std::to_string(VConstants::NETWORK);
+    if (auto m = ModifiersTag(startingKeys))
+        tags += ",m=" + EscapeTag(*m);
+    return tags;
+}
+
 // ZoneSystem.SetGlobalKey from the server: RPC_SetGlobalKey
 void ServerOptions::SetGlobalKey(std::string const &key)
 {

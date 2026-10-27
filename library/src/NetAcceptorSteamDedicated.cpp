@@ -11,6 +11,8 @@
 #include "isteamnetworking.h"
 #include "isteamnetworkingutils.h"
 #include "NetAcceptor.h"
+#include "WorldManager.h"
+#include "ServerOptions.h"
 #include "steam_api.h"
 #include "steam_api_common.h"
 #include "steamclientpublic.h"
@@ -149,13 +151,13 @@ AcceptorSteam::AcceptorSteam(std::string bind_addr) :
     SteamGameServer()->LogOnAnonymous();
 
     // vanilla ZSteamMatchmaking.RegisterServer: the server browser reads these. Tags unquoted like
-    // StringUtils.EncodeDictionaryAsString(.., false); the "m" world modifiers tag is not sent yet
+    // StringUtils.EncodeDictionaryAsString(.., false), m: the world modifiers (the starting keys)
     SteamGameServer()->SetServerName(AVL_CONFIG.m_server_name.c_str());
     SteamGameServer()->SetMapName(AVL_CONFIG.m_server_name.c_str());
     SteamGameServer()->SetMaxPlayerCount((int) AVL_CONFIG.m_player_limit);
     SteamGameServer()->SetPasswordProtected(!AVL_CONFIG.m_server_password.empty());
-    SteamGameServer()->SetGameTags(
-            ("g=" + std::string(VConstants::GAME) + ",n=" + std::to_string(VConstants::NETWORK)).c_str());
+    auto &&world = WorldManager::instance().GetWorld();
+    SteamGameServer()->SetGameTags(ServerOptions::SteamTags(world ? world->m_startingGlobalKeys : std::vector<std::string> {}).c_str());
     SteamGameServer()->SetAdvertiseServerActive(AVL_CONFIG.m_server_public);
 
     auto auth = SteamGameServerNetworkingSockets()->InitAuthentication();

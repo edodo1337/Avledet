@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -42,4 +43,12 @@ class ServerOptions
     void Load();
     // runs a remote command line; false when it is not one the dedicated server runs
     bool Run(std::string_view line);
+
+    // StringUtils.EncodeDictionaryAsString without quotes: "\\", "\"", "," and "=" escaped
+    static std::string EscapeTag(std::string_view s);
+    // the "m" tag of the server browser: ServerOptionsGUI.TryConvertModifierKeysToCompactKVP of the
+    // world's starting keys, encoded; none when a key does not parse
+    static std::optional<std::string> ModifiersTag(std::vector<std::string> const &keys);
+    // RegisterServer game tags: g (game version), n (network version), m (ModifiersTag)
+    static std::string SteamTags(std::vector<std::string> const &startingKeys);
 };

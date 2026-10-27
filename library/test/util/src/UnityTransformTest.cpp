@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
+#include "ServerOptions.h"
 #include "UnityTransform.h"
 
 // Ground truth dumped from the game (tools/avldump-server JsonDump.TransformTest/TransformSetTest), in
@@ -112,6 +113,26 @@ TEST(UnityTransform, ManagedMath)
         bad += !Same(q * a, qa);
         bad += !Same(q * rq, qr);
         bad += !Same(b + q * a, sum);
+    }
+    EXPECT_EQ(bad, 0);
+}
+
+// the server browser "m" tag against vanilla ServerOptionsGUI + StringUtils (constants.json)
+TEST(UnityTransform, ModifiersTag)
+{
+    auto data = Load("constants.json");
+    if (data.empty())
+        GTEST_SKIP() << "AVL_TRANSFORM_TESTS not set";
+    int bad = 0;
+    for (auto &&c : data.at("modifierTags")) {
+        auto keys = c.at("keys").get<std::vector<std::string>>();
+        auto tag  = ServerOptions::ModifiersTag(keys);
+        bool same = c.at("m").is_null() ? !tag : (tag && *tag == c.at("m").get<std::string>());
+        if (!same)
+            std::printf("keys %s: %s, vanilla %s\n", c.at("keys").dump().c_str(), tag ? tag->c_str() : "none",
+                        c.at("m").dump().c_str());
+        bad += !same;
+        bad += ServerOptions::SteamTags(keys) != c.at("tags").get<std::string>();
     }
     EXPECT_EQ(bad, 0);
 }

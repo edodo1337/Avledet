@@ -384,10 +384,10 @@ bool Avledet::update()
     if (!NetManager::instance().GetPeers().empty())
         m_worldTime += delta() * m_worldTimeMultiplier;
     // EnvMan.UpdateTimeSkip adds on top and stops exactly at the morning. Its FixedUpdate takes one
-    // 0.02 s step per frame, and the vanilla dedicated server runs about 28.2 frames a second (measured
-    // with the bot, idle and generating): a sleep lasts some 20 s, not 12
+    // fixedDeltaTime step (0.0199999921) per frame; the vanilla dedicated server asks for 30 frames a second
+    // and gets about 28.2 (measured with the bot, idle and generating): a sleep lasts some 20 s, not 12
     if (m_timeSkip) {
-        m_worldTime += delta() * m_timeSkipSpeed * (0.02 * 28.2);
+        m_worldTime += delta() * m_timeSkipSpeed * ((double) 0.0199999921f * 28.2);
         if (m_worldTime >= m_skipToTime) {
             m_worldTime = m_skipToTime;
             m_timeSkip  = false;
