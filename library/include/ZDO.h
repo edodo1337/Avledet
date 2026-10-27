@@ -93,10 +93,9 @@ class ZDO
     };
 
   private:
-    /*
-    * 36 bytes total:
-    */
+    // 56 bytes
     ZDOID m_id;                                         // 16 bytes
+    mutable std::int64_t m_owner {};                    // 8 bytes; most ZDOs have one (the server's at least)
     mutable Vector3f m_pos;                             // 12 bytes
     mutable Rev m_rev;                                  // 4 bytes
     mutable Vector3f m_rotation;                        // 12 bytes
@@ -258,7 +257,6 @@ class ZDO
             PAIRED_CONNECTORS;// Current linked connectors
     static inline ankerl::unordered_dense::segmented_map<ZDOID, ZDOConnectorData>
             TYPED_CONNECTORS; // Saved typed-connectors
-    static inline ankerl::unordered_dense::segmented_map<ZDOID, std::int64_t> ZDO_OWNERS;
 
     /*
         Internal global tree getters
@@ -1034,8 +1032,7 @@ class ZDO
                + get_memory_vars<std::string>(full) + get_memory_vars<std::vector<char>>(full)
                + get_memory_vars<float>(full) + get_memory_vars<float>(full)
                + PAIRED_CONNECTORS.size() * sizeof(decltype(PAIRED_CONNECTORS)::value_type)//yes, pair  \/
-               + TYPED_CONNECTORS.size() * sizeof(decltype(TYPED_CONNECTORS)::value_type)
-               + ZDO_OWNERS.size() * sizeof(decltype(ZDO_OWNERS)::value_type);
+               + TYPED_CONNECTORS.size() * sizeof(decltype(TYPED_CONNECTORS)::value_type);
     }
 
     friend std::ostream &operator<<(std::ostream &ostr, ZDO const &value)

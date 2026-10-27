@@ -191,11 +191,7 @@ void ZDO::_set_prefab_hash(avledet::util::Hash hash)
 // Set the owner of the ZDO without revising
 void ZDO::_set_owner(avledet::util::UserID owner)
 {
-    if (owner) {
-        ZDO_OWNERS[m_id] = owner;
-    } else {
-        ZDO_OWNERS.erase(m_id);
-    }
+    m_owner = owner;
 }
 
 void ZDO::_set_position(Vector3f const &pos)
@@ -308,12 +304,7 @@ void ZDO::set_local_scale(Vector3f scale, bool allowIdentity)
 
 avledet::util::UserID ZDO::get_owner() const
 {
-    // TODO optimize by checking owner bit
-    auto &&find = ZDO_OWNERS.find(this->m_id);
-    if (find != ZDO_OWNERS.end()) {
-        return find->second;
-    }
-    return 0;
+    return m_owner;
 }
 
 bool ZDO::is_owner(avledet::util::UserID owner) const

@@ -694,7 +694,6 @@ ZDO::smart_set::iterator ZdoManager::_EraseZDO(ZDO::smart_set::iterator itr)
     ZDO::m_strings.erase(zdoid);
     ZDO::m_byteArrays.erase(zdoid);
 
-    ZDO::ZDO_OWNERS.erase(zdoid);
     ZDO::PAIRED_CONNECTORS.erase(zdoid);
 
     //LOG_INFO(AVL_LOGGER, "zdo erased: {}", zdoid);
