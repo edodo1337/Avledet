@@ -6,7 +6,7 @@
 void SyncedList::Open(std::filesystem::path path, std::string_view comment)
 {
     m_path      = std::move(path);
-    m_lastWrite = {};
+    m_lastWrite = std::filesystem::file_time_type::min();// file_time_type{} is year 2174 in libstdc++
     m_comments.clear();
     m_list.clear();
     std::error_code ec;

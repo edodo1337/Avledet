@@ -59,6 +59,7 @@ target_sources(avledet_library
         ${CMAKE_CURRENT_SOURCE_DIR}/ZDOID.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/SyncedList.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/PersistentEventManager.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/ServerOptions.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/ZDOManager.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/ZoneManager.cpp
 )

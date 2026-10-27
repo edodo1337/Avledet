@@ -71,6 +71,7 @@ class Heightmap;
 
 class ZoneManager : public avledet::util::IManager<ZoneManager>
 {
+    friend class ServerOptions;// remote admin commands set keys like RPC_SetGlobalKey
     friend void probe_dump(char const *dir);// worldgen probe
 
     friend class NetManager;

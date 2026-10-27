@@ -13,7 +13,7 @@ class SyncedList
     std::filesystem::path m_path;
     std::vector<std::string> m_comments;
     std::vector<std::string> m_list;
-    std::filesystem::file_time_type m_lastWrite {};
+    std::filesystem::file_time_type m_lastWrite = std::filesystem::file_time_type::min();
     std::chrono::steady_clock::time_point m_lastCheck {};
 
     void Load();

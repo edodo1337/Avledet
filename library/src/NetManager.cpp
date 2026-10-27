@@ -15,6 +15,7 @@
 #include "ModManager.h"
 #include "NetAcceptor.h"
 #include "NetManager.h"
+#include "ServerOptions.h"
 #include "NetSocket.h"
 #include "Peer.h"
 #include "ReplayManager.h"
@@ -280,18 +281,19 @@ void NetManager::OnPeerConnect(Peer::Ptr peer)
 
     // isnt 'ban' a command?
     //  it should be part of RemoteCommand
-    peer->Register("RPC_RemoteCommand",
-                   [](Peer::Ptr peer, std::string_view command) {
-                       if (!peer->IsAdmin())
-                           return RefuseNotAdmin(peer);
-
-                       // TODO run commands or something?
-                       //  this is still in beta and subject to change
-                       //  although unlikely because this commands gets funneled to
-                       //  valheim commands, which have existed for a while.
-                       //  The only difference is that some commands are now classified as remote vs local.
-                       (void) command;
-                   });
+    peer->Register("RPC_RemoteCommand", [](Peer::Ptr peer, std::string_view command) {
+        if (!peer->IsAdmin())
+            return RefuseNotAdmin(peer);
+        LOG_NOTICE(AVL_LOGGER, "Remote admin '{}' executed command '{}' remotely.", peer->m_socket->get_host_name(),
+                   command);
+        static ServerOptions options = [] {
+            ServerOptions o;
+            o.Load();
+            return o;
+        }();
+        if (!options.Run(command))
+            LOG_INFO(AVL_LOGGER, "'{}' is not valid in the current context.", command);
+    });
 
     // Important
     peer->Register("CharacterID", [](Peer::Ptr peer, ZDOID characterID) {
