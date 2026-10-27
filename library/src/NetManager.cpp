@@ -181,8 +181,7 @@ void NetManager::SendPlayerList()
 
 void NetManager::SendHistoricalPlayerList()
 {
-    m_historyUpdated = false;
-    auto &&history   = WorldManager::instance().GetWorld()->m_playerHistory;
+    auto &&history = WorldManager::instance().GetWorld()->m_playerHistory;
     DataWriter writer;
     writer.write((std::int32_t) history.size());
     for (auto &&user : history)
@@ -483,8 +482,11 @@ void NetManager::Update()
     if (AVL_CONFIG.playerListSmoothUpdating > 0s) {
         if (VUtils::run_periodic<struct periodic_peer_tablist>(AVL_CONFIG.playerListSmoothUpdating)) {
             SendPlayerList();
-            if (m_historyUpdated)
+            // only this resets the flag: a new player gets the list on join and once more here
+            if (m_historyUpdated) {
+                m_historyUpdated = false;
                 SendHistoricalPlayerList();
+            }
         }
     }
 
