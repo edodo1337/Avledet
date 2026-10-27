@@ -26,6 +26,9 @@ class HeightmapManager : public avledet::util::IManager<HeightmapManager>
     void AddModifier(TerrainMod mod, bool created);
     // vanilla Heightmap.ForceGenerateAll: regenerate the poked heightmaps
     void ForceGenerateAll();
+    // a ghost zone is destroyed with its TerrainModifiers in the same frame: drop them, the
+    // heightmaps they changed go back to the plain terrain
+    void ClearModifiers();
 
     //void ForceGenerateAll();
     void ForceQueuedRegeneration();

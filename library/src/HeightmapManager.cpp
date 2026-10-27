@@ -190,6 +190,14 @@ void HeightmapManager::ForceGenerateAll()
             Regenerate(*heightmap);
 }
 
+void HeightmapManager::ClearModifiers()
+{
+    for (auto &&[zone, heightmap] : m_heightmaps)
+        if (heightmap && std::ranges::any_of(m_mods, [&](auto &&mod) { return heightmap->TerrainVSModifier(mod); }))
+            heightmap->Regenerate({});
+    m_mods.clear();
+}
+
 Heightmap *HeightmapManager::PollHeightmap(ZoneID zone)
 {
     auto find = m_heightmaps.find(zone);

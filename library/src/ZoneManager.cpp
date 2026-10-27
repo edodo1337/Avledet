@@ -720,6 +720,7 @@ void ZoneManager::PopulateZone(Heightmap &heightmap)
 
     // vanilla regenerates the heightmaps poked by new modifiers (rocks) in a later LateUpdate
     HeightmapManager::instance().ForceGenerateAll();
+    HeightmapManager::instance().ClearModifiers();
     s_probeZone.reset();
 }
 
