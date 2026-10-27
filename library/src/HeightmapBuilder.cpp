@@ -107,17 +107,14 @@ void HMBuildManager::Uninit()
 
 void HMBuildManager::Update()
 {
+    // drop what nobody took for a minute; m_building forgets it too, so a later poll builds it again
+    // (left there, the zone was never built nor generated until a restart)
     if (VUtils::run_periodic<struct clear_heightmaps>(1min)) {
         std::scoped_lock<std::mutex> scoped(m_mux);
+        for (auto &&[zone, heightmap] : m_ready)
+            m_building.erase(zone);
         m_ready.clear();
     }
-
-    //PERIODIC_NOW(1min, {
-    //    {
-    //        std::scoped_lock<std::mutex> scoped(m_mux);
-    //        m_ready.clear();
-    //    }
-    //});
 }
 
 // private

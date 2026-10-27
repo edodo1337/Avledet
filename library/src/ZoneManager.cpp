@@ -220,13 +220,6 @@ void ZoneManager::PostPrefabInit()
                     = AwakeDraws {draws[0], draws[3], j.at("damageIndex"), j.at("health")};
         }
 
-        std::ifstream lifeIn("lifetimes.json");
-        if (!lifeIn)
-            throw std::runtime_error("lifetimes.json missing (dumped from the 1.0 server)");
-        auto lifetimes = nlohmann::json::parse(lifeIn);
-        for (auto &&[name, seconds] : lifetimes.items())
-            m_lifetimes[avledet::util::get_stable_hash(name)] = std::chrono::duration<float>(seconds.get<float>());
-
         LoadLoot();
 
         std::ifstream modsIn("prefab_terrainmods.json");
@@ -586,25 +579,9 @@ void ZoneManager::Load(DataReader &in, std::vector<std::string> const &startingK
     LOG_NOTICE(AVL_LOGGER, "Loaded {} zones, {}/{} locations", zones, m_generatedFeatures.size(), count);
 }
 
-// private
-void ZoneManager::ExpireLifetimes(bool all)
-{
-    auto now = std::chrono::steady_clock::now();
-    std::erase_if(m_dying, [&](auto &&dying) {
-        if (!all && dying.second > now)
-            return false;
-        if (auto zdo = ZdoManager::instance().find_zdo(dying.first))
-            ZdoManager::instance().DestroyZDO(zdo);
-        return true;
-    });
-}
-
 void ZoneManager::Update()
 {
     ZoneScoped;
-
-    if (!m_dying.empty() && VUtils::run_periodic<struct periodic_lifetimes>(500ms))
-        ExpireLifetimes(false);
 
 #if AVL_IS_ON(AVL_ZONE_GENERATION)
     // TODO 100ms seems a tad too frequent
@@ -638,22 +615,14 @@ void ZoneManager::TryGenerateNearbyZones(Vector3f refPoint)
 {
     auto zone = WorldToZonePos(refPoint);
 
-    // Prioritize center zone
-    if (!TryPollGenerateZone(zone)) {
-
-        // If spawning fails, spawn other neighboring zones
-        auto num = NEAR_ZRADIUS + DISTANT_ZRADIUS;
-        for (int z = zone.y - num; z <= zone.y + num; z++) {
-            for (int x = zone.x - num; x <= zone.x + num; x++) {
-
-                // Skip center zone
-                if (x == zone.x && z == zone.y)
-                    continue;
-
-                TryPollGenerateZone(ZoneID((std::int16_t) x, (std::int16_t) z));
-            }
-        }
-    }
+    // vanilla CreateGhostZones: the peer's zone first, then at most one zone per call (0.1 s)
+    if (TryPollGenerateZone(zone))
+        return;
+    auto num = NEAR_ZRADIUS + DISTANT_ZRADIUS;
+    for (int z = zone.y - num; z <= zone.y + num; z++)
+        for (int x = zone.x - num; x <= zone.x + num; x++)
+            if ((x != zone.x || z != zone.y) && TryPollGenerateZone(ZoneID((std::int16_t) x, (std::int16_t) z)))
+                return;
 }
 
 bool ZoneManager::GenerateZoneBlocking(ZoneID zone)
@@ -723,6 +692,7 @@ void ZoneManager::PopulateZone(Heightmap &heightmap)
     HeightmapManager::instance().ForceGenerateAll();
     HeightmapManager::instance().ClearModifiers();
     s_probeZone.reset();
+    HeightmapManager::instance().Forget(heightmap.get_zone());// heightmap is gone after this
 }
 
 void ZoneManager::PopulateZone(ZoneID zone)
@@ -1752,11 +1722,8 @@ void ZoneManager::AwakeRandom(VUtils::Random::State &state, ZDO &zdo, bool rando
 
 void ZoneManager::RegisterSpawned(ZDO &zdo, float scale)
 {
-    // Gibber and TimedDestruction on Awake destroy the object soon after it spawns
-    if (auto life = m_lifetimes.find(zdo.get_prefab().get().m_hash); life != m_lifetimes.end())
-        m_dying.emplace_back(zdo.get_id(), std::chrono::steady_clock::now()
-                                                   + std::chrono::duration_cast<std::chrono::steady_clock::duration>(life->second));
-
+    // Gibber and TimedDestruction never run on the server: a ghost object is destroyed in the frame it
+    // spawns, its ZDO stays until the client that loads the zone destroys it
     auto itr = m_prefabMods.find(zdo.get_prefab().get().m_hash);
     if (itr == m_prefabMods.end())
         return;

@@ -29,6 +29,8 @@ class HeightmapManager : public avledet::util::IManager<HeightmapManager>
     // a ghost zone is destroyed with its TerrainModifiers in the same frame: drop them, the
     // heightmaps they changed go back to the plain terrain
     void ClearModifiers();
+    // the ghost zone is destroyed with its heightmap; built again if asked for later
+    void Forget(ZoneID zone) { m_heightmaps.erase(zone); }
 
     //void ForceGenerateAll();
     void ForceQueuedRegeneration();
