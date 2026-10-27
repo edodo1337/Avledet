@@ -522,19 +522,22 @@ void NetManager::Update()
     // Pump steam callbacks
     m_acceptor->update();
 
-    // Cleanup
+    // Cleanup; ZNet.Disconnect sends the player list right away
     {
+        bool left = false;
         for (auto &&itr = m_onlinePeers.begin(); itr != m_onlinePeers.end();) {
             Peer::Ptr &peer = *itr;
 
             if (peer->m_socket->get_status() == Status::Closed) {
                 OnPeerQuit(peer);
-
-                itr = m_onlinePeers.erase(itr);
+                itr  = m_onlinePeers.erase(itr);
+                left = true;
             } else {
                 ++itr;
             }
         }
+        if (left)
+            SendPlayerList();
     }
 
     {

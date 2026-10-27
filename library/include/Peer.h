@@ -112,8 +112,8 @@ class Peer : public std::enable_shared_from_this<Peer>,
 
     Vector3f m_pos;
     ZDOID m_characterID;
-    avledet::util::UserID m_uid {};
-    std::optional<std::chrono::steady_clock::time_point> m_kickedAt;// session id from PeerInfo, kept while the character respawns
+    avledet::util::UserID m_uid {};// session id from PeerInfo, kept while the character respawns
+    std::optional<std::chrono::steady_clock::time_point> m_closeAt;// kicked or rejected: closes 1 s later
 
     // Admin: 0, Visible: 1, Gated: 2
     BitPack<std::uint8_t, 1, 1, 1, 5> m_pack;
@@ -406,10 +406,10 @@ class Peer : public std::enable_shared_from_this<Peer>,
     // vanilla InternalKick: "Kicked" now, the socket closes a second later
     void Kick()
     {
-        if (m_kickedAt)
+        if (m_closeAt)
             return;
         SendKicked();
-        m_kickedAt = std::chrono::steady_clock::now();
+        m_closeAt = std::chrono::steady_clock::now();
     }
 
     bool close(ConnectionStatus status);

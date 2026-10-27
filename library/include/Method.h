@@ -174,10 +174,7 @@ class MethodImpl : public IMethod<T>
                 impl_tail<args_type>(reader,
                                      (std::make_index_sequence<std::tuple_size<args_type> {} - 1> {})));
 
-        if (reader.get_pos() != reader.size()) {
-            //LOG_WARNING(AVL_LOGGER, "Peer Rpc Invoke has more data than expected {}/{}", reader.size(), reader.get_pos());
-            throw std::runtime_error("peer sent more data than expected");
-        }
+        // extra bytes are ignored, as ZRpc does
 
         // TODO add category solo-prefix
         //  dont know where it went... likely performance concerns... but still fast-ish

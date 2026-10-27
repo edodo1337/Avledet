@@ -131,7 +131,7 @@ void Peer::update()
 
     auto now(std::chrono::steady_clock::now());
 
-    if (m_kickedAt && now - *m_kickedAt > std::chrono::seconds(1)) {
+    if (m_closeAt && now - *m_closeAt > std::chrono::seconds(1)) {
         Disconnect();
         return;
     }
@@ -168,7 +168,14 @@ void Peer::update()
 
             LOG_BACKTRACE(AVL_LOGGER, "{} rpc {} {}", m_name.empty() ? m_socket->get_host_name() : m_name,
                           method_name(hash), hash);
-            InternalInvoke(hash, reader);
+            // ZRpc.Update: a short package drops the peer (incompatible version), other errors are logged
+            try {
+                InternalInvoke(hash, reader);
+            } catch (avledet::util::EndOfStream const &) {
+                throw;
+            } catch (std::exception const &e) {
+                LOG_ERROR(AVL_LOGGER, "Exception in rpc {} from {}: {}", method_name(hash), m_name, e.what());
+            }
         }
         
         if (AVL_CONFIG.m_replay_mode == ReplayMode::CAPTURE) {
@@ -191,8 +198,10 @@ void Peer::InternalInvoke(avledet::util::Hash hash, DataReader &reader)
 bool Peer::close(ConnectionStatus status)
 {
     LOG_INFO(AVL_LOGGER, "{} rejected: {}", m_socket->get_host_name(), magic_enum::enum_name(status));
+    // the client reads the error and leaves; closed a second later like a kick, so it is not lost
     Invoke(avledet::util::hashes::Rpc::S2C_Error, status);
-    Disconnect();
+    if (!m_closeAt)
+        m_closeAt = std::chrono::steady_clock::now();
     return false;
 }
 

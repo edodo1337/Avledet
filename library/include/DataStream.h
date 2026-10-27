@@ -62,6 +62,12 @@ namespace avledet::util {
         std::size_t m_pos;
     };
 
+    // reading past the end (C# EndOfStreamException)
+    struct EndOfStream : std::runtime_error
+    {
+        EndOfStream() : std::runtime_error("read past the end of the package") {}
+    };
+
     class Reader : public Stream
     {
         template<class... T>

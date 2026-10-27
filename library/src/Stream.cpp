@@ -43,7 +43,7 @@ namespace avledet::util {
     void Stream::check_offset(std::size_t offset) const
     {
         if (!this->is_valid_offset(offset))
-            throw std::runtime_error("invalid offset");
+            throw EndOfStream();
     }
 
     std::size_t Stream::get_pos() const
