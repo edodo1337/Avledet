@@ -1,0 +1,15 @@
+# Copy to server-data/server.yml and edit. Missing keys get default values.
+# The server rewrites this file on start, without the comments.
+server:
+  name: My Valheim server
+  password: secret123
+  # true shows the server in the community list
+  public: false
+players:
+  max-online: 10
+world:
+  # world name and save folder name in worlds_local/
+  world: world
+  # seed of a new world, "" means random
+  seed: ""
+  save-interval: 30min

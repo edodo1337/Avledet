@@ -23,12 +23,14 @@ the format of the official server, so a world can be moved from one server to th
 ## Run with Docker Compose
 
 Requirements: Linux x86-64, Docker with the Compose plugin, about 5 GB of free disk space. Only
-`docker-compose.yml` is needed, the images are on `ghcr.io/edodo1337`.
+`docker-compose.yml` and `server.yml.example` are needed, the images are on `ghcr.io/edodo1337`.
 
 ```sh
 mkdir avledet && cd avledet
 curl -fsSLO https://raw.githubusercontent.com/edodo1337/Avledet/port-1.0/docker-compose.yml
 mkdir game-data server-data
+curl -fsSL -o server-data/server.yml https://raw.githubusercontent.com/edodo1337/Avledet/port-1.0/server.yml.example
+nano server-data/server.yml    # server name, password, world, see Configuration
 docker compose run --rm dump   # game data from the official server, see below
 docker compose up -d           # start the server
 docker compose logs -f         # server log, Ctrl+C to close it
@@ -61,8 +63,9 @@ The game data is not a world save. To use your own world, see the end of Configu
 
 ## Configuration
 
-On the first start the server writes `server-data/server.yml` with default values and a random seed. To change
-it, stop the server, edit the file and start the server again:
+The settings are in `server-data/server.yml`, an example is in [server.yml.example](server.yml.example). Missing
+keys get default values. Without the file the server creates it with defaults and a random seed. To change the
+settings, stop the server, edit the file and start the server again:
 
 ```sh
 docker compose stop
@@ -77,7 +80,7 @@ docker compose start
 | `server.public` | `false` | `true` shows the server in the community list |
 | `players.max-online` | `10` | player limit |
 | `world.world` | `world` | world name and save folder name |
-| `world.seed` | random | world seed |
+| `world.seed` | random | seed of a new world |
 
 Other files in `server-data/`:
 
