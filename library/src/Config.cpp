@@ -340,7 +340,9 @@ void ConfigManager::load()
                 //  - 'rename' may not overwrite
                 std::filesystem::remove(backup, ec);
 
-                std::filesystem::rename(current, backup, ec);
+                // first start: no server.yml to back up
+                if (std::filesystem::exists(current))
+                    std::filesystem::rename(current, backup, ec);
                 if (ec) {
                     LOG_ERROR(AVL_LOGGER, "Failed to create yml backup (.old)");
                 } else {
