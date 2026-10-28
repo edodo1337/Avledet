@@ -56,11 +56,12 @@ FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libstdc++6 libgcc-s1 \
     && rm -rf /var/lib/apt/lists/*
 
-# binary and libs in /srv, game data template in /opt/avledet/data (copied to the volume on start)
+LABEL org.opencontainers.image.source=https://github.com/edodo1337/Avledet
+
+# binary and libs in /srv, data template in /opt/avledet/data (copied to the volume on start).
+# No game data in the image, it is mounted from game-data/out (docker compose run --rm dump).
 COPY --from=build /build/bin/avledet_server /build/bin/liblua.so /build/bin/libsteam_api.so /build/bin/steam_appid.txt /srv/
 COPY --from=build /build/bin/data /opt/avledet/data
-# made by the dump step: docker compose run --rm dump
-COPY game-data/out/ /opt/avledet/data/
 COPY --from=steamcmd /root/.local/share/Steam/steamcmd/linux64/steamclient.so /opt/avledet/
 COPY port/docker/entrypoint.sh /opt/avledet/
 RUN rm -f /opt/avledet/data/server.yml && mkdir -p /srv/data && chmod 777 /srv/data

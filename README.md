@@ -22,25 +22,41 @@ the format of the official server, so a world can be moved from one server to th
 
 ## Run with Docker Compose
 
-Requirements: Linux x86-64, Docker with the Compose plugin, about 8 GB of free disk space.
+Requirements: Linux x86-64, Docker with the Compose plugin, about 5 GB of free disk space.
 
 ```sh
 git clone -b port-1.0 https://github.com/edodo1337/Avledet.git
 cd Avledet
 mkdir game-data server-data
-docker compose run --rm dump
-docker compose build
-docker compose up -d
+docker compose run --rm dump   # game data from the official server, see below
+docker compose up -d           # start the server
+docker compose logs -f         # server log, Ctrl+C to close it
 ```
 
-`dump` downloads the official dedicated server with SteamCMD (about 2 GB) and writes the game data to
-`game-data/out/`. `docker compose build` copies this data into the image. The first build compiles all C++
-dependencies and takes a long time.
+`docker compose up` downloads a ready image from `ghcr.io/edodo1337/avledet`. To build the image yourself, run
+`docker compose build` before `up`. The first build takes a long time.
 
-Files in `game-data/` and `server-data/` belong to user `1000:1000`. For another user id, change `user:`, `PUID`
-and `PGID` in `docker-compose.yml`.
+The containers write files as user 1000. If `id -u` shows another number, change `user:`, `PUID` and `PGID` in
+`docker-compose.yml`.
 
-After a game update, run the same commands again, starting with `git pull`.
+After a game update, run `git pull`, `docker compose pull`, `docker compose run --rm dump` and
+`docker compose up -d`.
+
+### Game data
+
+The server needs data files from the game, the image does not include them. `dump` downloads the official
+dedicated server with SteamCMD (about 2 GB) and writes the files to `game-data/out/`. The server reads them from
+there on every start.
+
+If you already have these files from Valheim 1.0.20, put them into `game-data/out/` and skip `dump`:
+
+- `prefabs.pkg`, `features.pkg`, `vegetation.pkg`, `randomEvents.pkg`, `dungeons.pkg`, `colliders.pkg`;
+- `altbiomes.json`, `awake.json`, `event_objects.json`, `loot.json`, `persistentEvents.json`,
+  `prefab_terrainmods.json`, `server_options.json`, `locations_meta.json`.
+
+These files are made by the plugin in `port/tools/avldump-server`.
+
+The game data is not a world save. To use your own world, see the end of Configuration.
 
 ## Configuration
 

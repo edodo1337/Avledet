@@ -1,7 +1,8 @@
 services:
   avledet:
+    # built by .github/workflows/docker.yml, docker compose build makes it locally
+    image: ghcr.io/edodo1337/avledet:latest
     build: .
-    image: avledet:1.0.20
     container_name: avledet
     # owner of ./server-data on the host
     user: "1000:1000"
@@ -10,6 +11,8 @@ services:
     volumes:
       # server.yml, logs, player lists and worlds_local/<world>/
       - ./server-data:/srv/data
+      # game data: docker compose run --rm dump
+      - ./game-data/out:/srv/game-data:ro
     # the world is saved on stop
     stop_grace_period: 1m
     restart: unless-stopped

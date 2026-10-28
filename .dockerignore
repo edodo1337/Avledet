@@ -3,9 +3,7 @@
 .vscode
 build-*
 server-data
-game-data/server
-game-data/bepinex
-game-data/run
+game-data
 data/worlds
 data/tests
 data/server.yml
