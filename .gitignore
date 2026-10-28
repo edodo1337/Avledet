@@ -110,5 +110,3 @@ build-*/
 # docker compose volume
 server-data/
 game-data/
-
-.env

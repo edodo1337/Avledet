@@ -12,4 +12,3 @@ port/tools/*
 !port/tools/make_location_meta.py
 port/tools/avldump-server/bin
 port/tools/avldump-server/obj
-.env

@@ -23,20 +23,19 @@ the format of the official server, so a world can be moved from one server to th
 ## Run with Docker Compose
 
 Requirements: Linux x86-64, Docker with the Compose plugin, about 5 GB of free disk space. Only
-`docker-compose.yml` and `.env` are needed, the images are on `ghcr.io/edodo1337`.
+`docker-compose.yml` is needed, the images are on `ghcr.io/edodo1337`.
 
 ```sh
 mkdir avledet && cd avledet
 curl -fsSLO https://raw.githubusercontent.com/edodo1337/Avledet/port-1.0/docker-compose.yml
-curl -fsSL -o .env https://raw.githubusercontent.com/edodo1337/Avledet/port-1.0/.env.example
-nano .env                      # server name, password, world, see Configuration
 mkdir game-data server-data
 docker compose run --rm dump   # game data from the official server, see below
 docker compose up -d           # start the server
 docker compose logs -f         # server log, Ctrl+C to close it
 ```
 
-The containers write files as user 1000. If `id -u` shows another number, set `PUID` and `PGID` in `.env`.
+The containers write files as user 1000. If `id -u` shows another number, change `user:`, `PUID` and `PGID` in
+`docker-compose.yml`.
 
 After a game update, run `docker compose pull`, `docker compose run --rm dump` and `docker compose up -d`.
 
@@ -62,19 +61,23 @@ The game data is not a world save. To use your own world, see the end of Configu
 
 ## Configuration
 
-The main settings are in `.env`. To change them, edit the file and run `docker compose up -d`.
+On the first start the server writes `server-data/server.yml` with default values and a random seed. To change
+it, stop the server, edit the file and start the server again:
 
-| Variable | Example | Meaning |
+```sh
+docker compose stop
+nano server-data/server.yml
+docker compose start
+```
+
+| Key | Default | Meaning |
 |---|---|---|
-| `SERVER_NAME` | `Avledet server` | server name |
-| `SERVER_PASSWORD` | `secret123` | password for joining |
-| `SERVER_PUBLIC` | `false` | `true` shows the server in the community list |
-| `MAX_PLAYERS` | `10` | player limit |
-| `WORLD_NAME` | `world` | world name and save folder name |
-| `WORLD_SEED` | empty | seed of a new world, empty means random |
-
-On every start the server writes these values to `server-data/server.yml`. An empty value keeps what is in the
-file. Other settings are only in `server.yml`: stop the server, edit the file and start it again.
+| `server.name` | `Avledet server` | server name |
+| `server.password` | empty | password for joining |
+| `server.public` | `false` | `true` shows the server in the community list |
+| `players.max-online` | `10` | player limit |
+| `world.world` | `world` | world name and save folder name |
+| `world.seed` | random | world seed |
 
 Other files in `server-data/`:
 
@@ -85,7 +88,7 @@ Other files in `server-data/`:
 Players join with the "Join IP" button and the address `<host>:2456`. The firewall must allow UDP 2456 and 2457.
 
 To use a world from the official server, stop that server, copy its folder `worlds_local/<world>/` into
-`server-data/worlds_local/` and set `WORLD_NAME` to the same name.
+`server-data/worlds_local/` and set `world.world` to the same name.
 
 The world is saved on `docker compose stop` and `docker compose down`.
 
