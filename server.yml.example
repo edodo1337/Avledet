@@ -9,7 +9,7 @@ players:
   max-online: 10
 world:
   # world name and save folder name in worlds_local/
-  world: world
+  world: Dedicated
   # seed of a new world, "" means random
   seed: ""
   save-interval: 30min
