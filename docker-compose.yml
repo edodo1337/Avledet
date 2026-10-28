@@ -1,0 +1,34 @@
+services:
+  avledet:
+    build: .
+    image: avledet:1.0.20
+    container_name: avledet
+    # owner of ./server-data on the host
+    user: "1000:1000"
+    ports:
+      - "2456-2457:2456-2457/udp"
+    volumes:
+      # server.yml, logs, player lists and worlds_local/<world>/
+      - ./server-data:/srv/data
+    # the world is saved on stop
+    stop_grace_period: 1m
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # game data for the image: docker compose run --rm dump
+  dump:
+    profiles: [dump]
+    build:
+      context: .
+      dockerfile: port/docker/dump.Dockerfile
+    image: avledet-dump
+    environment:
+      # owner of ./game-data on the host
+      PUID: "1000"
+      PGID: "1000"
+    volumes:
+      - ./game-data:/game-data

@@ -1,0 +1,16 @@
+.git
+.idea
+.vscode
+build-*
+server-data
+game-data/server
+game-data/bepinex
+game-data/run
+data/worlds
+data/tests
+data/server.yml
+port/tools/*
+!port/tools/avldump-server
+!port/tools/make_location_meta.py
+port/tools/avldump-server/bin
+port/tools/avldump-server/obj
