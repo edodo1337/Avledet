@@ -22,25 +22,26 @@ the format of the official server, so a world can be moved from one server to th
 
 ## Run with Docker Compose
 
-Requirements: Linux x86-64, Docker with the Compose plugin, about 5 GB of free disk space.
+Requirements: Linux x86-64, Docker with the Compose plugin, about 5 GB of free disk space. Only
+`docker-compose.yml` is needed, the images are on `ghcr.io/edodo1337`.
 
 ```sh
-git clone -b port-1.0 https://github.com/edodo1337/Avledet.git
-cd Avledet
+mkdir avledet && cd avledet
+curl -fsSLO https://raw.githubusercontent.com/edodo1337/Avledet/port-1.0/docker-compose.yml
 mkdir game-data server-data
 docker compose run --rm dump   # game data from the official server, see below
 docker compose up -d           # start the server
 docker compose logs -f         # server log, Ctrl+C to close it
 ```
 
-`docker compose up` downloads a ready image from `ghcr.io/edodo1337/avledet`. To build the image yourself, run
-`docker compose build` before `up`. The first build takes a long time.
-
 The containers write files as user 1000. If `id -u` shows another number, change `user:`, `PUID` and `PGID` in
 `docker-compose.yml`.
 
-After a game update, run `git pull`, `docker compose pull`, `docker compose run --rm dump` and
-`docker compose up -d`.
+After a game update, run `docker compose pull`, `docker compose run --rm dump` and `docker compose up -d`.
+
+To build the images yourself, run in this repo `docker build -t ghcr.io/edodo1337/avledet .` and
+`docker build -t ghcr.io/edodo1337/avledet-dump -f port/docker/dump.Dockerfile .`. The first build takes a long
+time.
 
 ### Game data
 

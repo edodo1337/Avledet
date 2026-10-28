@@ -2,6 +2,8 @@
 # Run with: docker compose run --rm dump (see README.md)
 FROM steamcmd/steamcmd:ubuntu-24
 
+LABEL org.opencontainers.image.source=https://github.com/edodo1337/Avledet
+
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip python3 dotnet-sdk-8.0 \
         libatomic1 libpulse0 libpulse-mainloop-glib0 libsdl2-2.0-0 libdbus-1-3 libsndfile1 libsystemd0 libx11-6 libxcb1 \
     && rm -rf /var/lib/apt/lists/*

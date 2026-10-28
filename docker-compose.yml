@@ -1,8 +1,6 @@
 services:
   avledet:
-    # built by .github/workflows/docker.yml, docker compose build makes it locally
     image: ghcr.io/edodo1337/avledet:latest
-    build: .
     container_name: avledet
     # owner of ./server-data on the host
     user: "1000:1000"
@@ -22,13 +20,10 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # game data for the image: docker compose run --rm dump
+  # game data for the server: docker compose run --rm dump
   dump:
     profiles: [dump]
-    build:
-      context: .
-      dockerfile: port/docker/dump.Dockerfile
-    image: avledet-dump
+    image: ghcr.io/edodo1337/avledet-dump:latest
     environment:
       # owner of ./game-data on the host
       PUID: "1000"
