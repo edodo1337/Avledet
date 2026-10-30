@@ -28,7 +28,7 @@ jobs:
           tags: ghcr.io/${{ github.repository_owner }}/avledet:latest
           # the vcpkg layers take most of the build time
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -36,4 +36,4 @@ jobs:
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/avledet-dump:latest
           cache-from: type=gha,scope=dump
-          cache-to: type=gha,mode=max,scope=dump
+          cache-to: type=gha,mode=max,scope=dump,ignore-error=true
