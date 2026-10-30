@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scripted Valheim 1.0.20 peer over plain TCP (ZSocket2 framing), to run the same scenario against the vanilla
+"""Scripted Valheim 1.0.21 peer over plain TCP (ZSocket2 framing), to run the same scenario against the vanilla
 server (with tools/tcp-listen) and Avledet (experimental.server-tcp) and diff what each server sends.
 Usage: vbot.py <host> <port> <scenario> <out.jsonl> [password]
 Every message from the server goes to out.jsonl as one JSON line; ZDOs are decoded."""
@@ -284,7 +284,7 @@ def join(p, password, name='Bot', refpos=(0, 30, 0), simdist=(2, 2, True)):
     p.rpc('ServerHandshake', lambda w: w.str(''))
     need_pw, salt = p.pump(10, until='ClientHandshake')
     hashed = md5_ascii(password + salt) if need_pw else ''
-    info = W().long(p.uid).str('1.0.20').uint(41).v3(refpos).str(name).str('')
+    info = W().long(p.uid).str('1.0.21').uint(41).v3(refpos).str(name).str('')
     info.int(simdist[0]).int(simdist[1]).bool(simdist[2]).str(hashed).str('').bytes(b'')
     p.rpc('PeerInfo', lambda w: w.pkg(info))
     p.pump(10, until='PeerInfo')

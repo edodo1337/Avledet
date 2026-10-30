@@ -14,8 +14,8 @@ RUN="$ROOT/run/save-test"
 rm -rf "$RUN" && mkdir -p "$RUN/home/.steam/sdk64" "$RUN/save/worlds_local"
 tar -C "$ROOT/avledet/build-Release/bin" --exclude='data/worlds/*' -cf - . | tar -C "$RUN" -xf -
 cp "$ROOT/re/redist/linux64/steamclient.so" "$RUN/home/.steam/sdk64/"
-for f in prefabs features vegetation randomEvents dungeons colliders; do cp "$ROOT/re/pkg-1.0.20/pkg/$f.pkg" "$RUN/data/"; done
-for f in altbiomes locations_meta awake prefab_terrainmods loot; do cp "$ROOT/re/pkg-1.0.20/json/$f.json" "$RUN/data/"; done
+for f in prefabs features vegetation randomEvents dungeons colliders; do cp "$ROOT/re/pkg-1.0.21/pkg/$f.pkg" "$RUN/data/"; done
+for f in altbiomes locations_meta awake prefab_terrainmods loot; do cp "$ROOT/re/pkg-1.0.21/json/$f.json" "$RUN/data/"; done
 sed -i "s/^  world: .*/  world: $WORLD\n  savedir: \/srv\/save/" "$RUN/data/server.yml"
 if [ -d "$SRC" ]; then
     cp -r "$SRC" "$RUN/save/worlds_local/$WORLD"

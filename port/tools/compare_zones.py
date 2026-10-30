@@ -17,7 +17,7 @@ def _transient():
     """Non-persistent prefabs: never saved, destroyed with their zone. The vanilla probe has none left
     (its reference point is far from the zones), so they are left out on both sides."""
     import json, os
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "re", "pkg-1.0.20", "json", "prefabs.json")
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "re", "pkg-1.0.21", "json", "prefabs.json")
     return {p['name'] for p in json.load(open(path)) if p.get('view') and not p['view']['m_persistent']}
 
 

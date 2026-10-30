@@ -1,9 +1,9 @@
-# Avledet for Valheim 1.0.20
+# Avledet for Valheim 1.0.21
 
-Forked from [Avledet](https://github.com/crazicrafter1/Avledet). Updated to Valheim 1.0.20 (network version 41)
+Forked from [Avledet](https://github.com/crazicrafter1/Avledet). Updated to Valheim 1.0.21 (network version 41)
 with Claude.
 
-Avledet is a Valheim dedicated server written in C++. Unmodded 1.0.20 clients join it over Steam. World saves use
+Avledet is a Valheim dedicated server written in C++. Unmodded 1.0.21 clients join it over Steam. World saves use
 the format of the official server, so a world can be moved from one server to the other.
 
 ## Tested against the official server
@@ -51,7 +51,7 @@ The server needs data files from the game, the image does not include them. `dum
 dedicated server with SteamCMD (about 2 GB) and writes the files to `game-data/out/`. The server reads them from
 there on every start.
 
-If you already have these files from Valheim 1.0.20, put them into `game-data/out/` and skip `dump`:
+If you already have these files from Valheim 1.0.21, put them into `game-data/out/` and skip `dump`:
 
 - `prefabs.pkg`, `features.pkg`, `vegetation.pkg`, `randomEvents.pkg`, `dungeons.pkg`, `colliders.pkg`;
 - `altbiomes.json`, `awake.json`, `event_objects.json`, `loot.json`, `persistentEvents.json`,

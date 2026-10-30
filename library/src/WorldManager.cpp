@@ -18,7 +18,7 @@
 #include "ZDOManager.h"
 #include "ZoneManager.h"
 
-// ZoneSystem.m_locationVersion and Version.World of 1.0.20
+// ZoneSystem.m_locationVersion and Version.World of 1.0.21
 static_assert(VConstants::WORLD == 42);
 
 World::World(std::string name, std::string seedName)

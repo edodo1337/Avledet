@@ -1,7 +1,7 @@
-# Avledet for Valheim 1.0.20
+# Avledet for Valheim 1.0.21
 
-This branch (`port-1.0`) ports Avledet to Valheim 1.0.20 (network 41, world 42) and checks it against the
-vanilla dedicated server. Unmodded 1.0.20 clients join over Steam.
+This branch (`port-1.0`) ports Avledet to Valheim 1.0.21 (network 41, world 42) and checks it against the
+vanilla dedicated server. Unmodded 1.0.21 clients join over Steam.
 
 What matches vanilla, checked by the tools here:
 
@@ -24,10 +24,10 @@ workspace/
   build -> avledet/port/build
   tools -> avledet/port/tools
   third_party/steamsdk/sdk Steamworks SDK (not redistributable: steamworks-sys 0.13.0 crate or partner site)
-  re/server-1.0/           Valheim dedicated server 1.0.20 (SteamCMD app 896660)
+  re/server-1.0/           Valheim dedicated server 1.0.21 (SteamCMD app 896660)
   re/bepinex/              BepInExPack_Valheim, for the dumper and the vanilla side of the tests
   re/redist/linux64/       steamclient.so
-  re/pkg-1.0.20/{pkg,json} game data dumped by tools/avldump-server
+  re/pkg-1.0.21/{pkg,json} game data dumped by tools/avldump-server
 ```
 
 Game files and dumped data are not in this repo, each user dumps them from their own copy of the game.
@@ -40,7 +40,7 @@ docker build -t vrun:1 -f build/vrun.Dockerfile build
 build/build-avledet.sh Release
 
 # game data: build tools/avldump-server (dotnet, references the game's Managed dlls and BepInEx core),
-# run it once in the vanilla server, copy run/dump/game/dumped/{pkg,json} to re/pkg-1.0.20,
+# run it once in the vanilla server, copy run/dump/game/dumped/{pkg,json} to re/pkg-1.0.21,
 # then tools/make_location_meta.py writes json/locations_meta.json
 tools/run-vanilla-plugin.sh tools/avldump-server/bin/Release/net462/AvlDumpServer.dll run/dump
 

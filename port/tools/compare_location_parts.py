@@ -10,7 +10,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # -I drops the script dir
 from compare_zones import load, match, to_local
 
-JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "re", "pkg-1.0.20", "json")
+JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "re", "pkg-1.0.21", "json")
 van, avl = load(sys.argv[1]), load(sys.argv[2])
 zone = lambda x, z: (math.floor((x + 32) / 64), math.floor((z + 32) / 64))
 locz = {}

@@ -12,8 +12,8 @@ PORT=2459
 rm -rf "$RUN" && mkdir -p "$RUN/home/.steam/sdk64" "$RUN/save/worlds_local"
 tar -C "$ROOT/avledet/build-Release/bin" --exclude='data/worlds/*' -cf - . | tar -C "$RUN" -xf -
 cp "$ROOT/re/redist/linux64/steamclient.so" "$RUN/home/.steam/sdk64/"
-for f in prefabs features vegetation randomEvents dungeons colliders; do cp "$ROOT/re/pkg-1.0.20/pkg/$f.pkg" "$RUN/data/"; done
-for f in altbiomes locations_meta awake prefab_terrainmods loot; do cp "$ROOT/re/pkg-1.0.20/json/$f.json" "$RUN/data/"; done
+for f in prefabs features vegetation randomEvents dungeons colliders; do cp "$ROOT/re/pkg-1.0.21/pkg/$f.pkg" "$RUN/data/"; done
+for f in altbiomes locations_meta awake prefab_terrainmods loot; do cp "$ROOT/re/pkg-1.0.21/json/$f.json" "$RUN/data/"; done
 Y="$RUN/data/server.yml"
 sed -i "s/^  world: .*/  world: BotTest\n  savedir: \/srv\/save/; s/^  seed: .*/  seed: $SEED/; s/^  password: .*/  password: secret123/" "$Y"
 sed -i "s/^  server-tcp: .*/  server-tcp: true/" "$Y"
