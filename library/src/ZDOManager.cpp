@@ -77,6 +77,16 @@ void ZdoManager::Update()
     m_sendFrames = std::min(m_sendFrames + std::chrono::duration<double>(now - m_sendClock).count(), 2 * frame);
     m_sendClock  = now;
     float threshold = std::chrono::duration<float>(AVL_CONFIG.m_zdo_send_interval).count();
+
+    // peer-send-interval: more peers a frame once the vanilla cycle gets longer than this
+    // a cycle is ceil(peers / batch) frames and one frame of waiting
+    int batch = 1;
+    if (AVL_CONFIG.m_zdo_peer_send_interval.count() > 0) {
+        int frames = (int) (std::chrono::duration<double>(AVL_CONFIG.m_zdo_peer_send_interval).count() / frame);
+        int sending = std::max(frames - 1, 1);
+        batch = std::max(((int) peers.size() + sending - 1) / sending, 1);
+    }
+
     for (; m_sendFrames >= frame; m_sendFrames -= frame) {
         if (peers.empty())
             continue;
@@ -88,10 +98,12 @@ void ZdoManager::Update()
             }
             continue;
         }
-        if (m_nextSendPeer < (int) peers.size())
-            SendZDOs(peers[m_nextSendPeer], false);
-        if (++m_nextSendPeer >= (int) peers.size())
-            m_nextSendPeer = -1;
+        for (int i = 0; i < batch && m_nextSendPeer >= 0; i++) {
+            if (m_nextSendPeer < (int) peers.size())
+                SendZDOs(peers[m_nextSendPeer], false);
+            if (++m_nextSendPeer >= (int) peers.size())
+                m_nextSendPeer = -1;
+        }
     }
 
     if (!m_destroySendList.empty()) {
@@ -408,25 +420,7 @@ void ZdoManager::_ConnectAll()
 
 [[nodiscard]] std::pair<ZDO::smart_set::iterator, bool> ZdoManager::_Instantiate(ZDOID zdoid) noexcept
 {
-    //https://jguegant.github.io/blogs/tech/performing-try-emplace.html
-    //auto &&insert = m_objectsByID.insert(std::make_unique<ZDO>(zdoid));
-    auto contained = m_objectsByID.contains(zdoid);//TODO dbg test
-    if (contained) {
-        if (true) {
-            volatile int x = 0;
-        }
-    }
-
-    auto &&insert = m_objectsByID.insert(ZDO::make_smart(zdoid));
-
-    // if newly inserted, but ALREADY CONTAINED???
-    if (insert.second && contained) {
-        assert(false);
-    }
-
-    //LOG_INFO(AVL_LOGGER, "zdo instantiated: {} {}", insert.second, zdoid);
-
-    return insert;
+    return m_objectsByID.insert(ZDO::make_smart(zdoid));
 }
 
 std::pair<ZDO::smart_set::iterator, bool> ZdoManager::_Instantiate(ZDOID zdoid, Vector3f position) noexcept

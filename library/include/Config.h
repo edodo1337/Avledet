@@ -101,7 +101,9 @@ public:
 
     std::uint32_t m_zdo_max_congestion {};// congestion rate
     std::uint32_t m_zdo_min_congestion {};// congestion rate
+    std::uint32_t m_zdo_max_send_rate {};// bytes per second, per connection, Steam sockets only
     std::chrono::milliseconds m_zdo_send_interval {};
+    std::chrono::milliseconds m_zdo_peer_send_interval {};// longest wait of one peer, 0 is vanilla
     std::chrono::seconds m_zdo_assign_interval {};
     AssignAlgorithm m_zdo_owner_algo {};
 

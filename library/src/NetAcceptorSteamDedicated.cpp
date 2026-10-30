@@ -175,6 +175,8 @@ AcceptorSteam::AcceptorSteam(std::string bind_addr) :
     auto timeout   = (float) (30000ms).count();
     int32 offline  = 1;
     int32 sendrate = 153600;
+    // when the max is over the min, Steam adapts the rate to the connection
+    int32 maxrate  = (int32) AVL_CONFIG.m_zdo_max_send_rate;
     SteamNetworkingUtils()->SetConfigValue(k_ESteamNetworkingConfig_TimeoutConnected,
                                            k_ESteamNetworkingConfig_Global, 0, k_ESteamNetworkingConfig_Float,
                                            &timeout);
@@ -186,7 +188,7 @@ AcceptorSteam::AcceptorSteam(std::string bind_addr) :
                                            &sendrate);
     SteamNetworkingUtils()->SetConfigValue(k_ESteamNetworkingConfig_SendRateMax,
                                            k_ESteamNetworkingConfig_Global, 0, k_ESteamNetworkingConfig_Int32,
-                                           &sendrate);
+                                           &maxrate);
 
     /*
     {

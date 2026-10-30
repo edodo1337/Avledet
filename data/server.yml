@@ -9,7 +9,7 @@ server:
   dedicated: true
   bind-address: 0.0.0.0
 players:
-  max-online: 10
+  max-online: 15
   authenticate: true
   timeout: 30s
   smooth-updating: 2s
@@ -26,6 +26,8 @@ zdos:
   send-interval: 50ms
   max-send-threshold: 10240
   min-send-threshold: 2048
+  max-send-rate: 153600
+  peer-send-interval: 0ms
   assign-interval: 2s
 dungeons:
   enabled: true

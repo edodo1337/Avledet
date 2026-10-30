@@ -6,7 +6,7 @@ server:
   # true shows the server in the community list
   public: false
 players:
-  max-online: 10
+  max-online: 15
 world:
   # world name and save folder name in worlds_local/
   world: Dedicated

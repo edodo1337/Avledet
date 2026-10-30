@@ -78,9 +78,25 @@ docker compose start
 | `server.name` | `Avledet server` | server name |
 | `server.password` | empty | password for joining |
 | `server.public` | `false` | `true` shows the server in the community list |
-| `players.max-online` | `10` | player limit |
+| `players.max-online` | `15` | player limit |
 | `world.world` | `world` | world name and save folder name |
 | `world.seed` | random | seed of a new world |
+| `zdos.max-send-rate` | `153600` | send rate limit for one player, bytes per second, Steam adapts below it down to the default |
+| `zdos.max-send-threshold` | `10240` | send queue limit for one player, bytes. Keep it near 70 ms of the send rate: RPCs wait in the same queue |
+| `zdos.peer-send-interval` | `0ms` | longest wait between updates for one player, `0ms` is one player a frame like vanilla |
+
+The `zdos` defaults match vanilla. Up to 25 Mbit/s for 15 players and an update every 320 ms instead of 570 ms:
+
+```yaml
+zdos:
+  max-send-rate: 200000
+  max-send-threshold: 14336
+  peer-send-interval: 380ms
+```
+
+`peer-send-interval` costs CPU, the main thread checks every object near a player on each send. 15 test clients and
+13000 objects around them, on a desktop CPU: 25-35% of one core with `0ms`, 40-60% with `380ms`, 75-80% with `250ms`
+and lower.
 
 Other files in `server-data/`:
 

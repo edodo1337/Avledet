@@ -160,7 +160,7 @@ void ConfigManager::load()
                 Player settings
             */
 
-            r(m_player_limit, players, "max-online", 10, [](int val) { return val < 1; });
+            r(m_player_limit, players, "max-online", 15, [](int val) { return val < 1; });
             r(m_player_auth, players, "authenticate", true, nullptr);
             // If timeout is 0, will never timeout
             r(m_player_timeout, players, "timeout", 30s,
@@ -222,6 +222,10 @@ void ConfigManager::load()
               [](int val) { return val < 1000; });
             r(m_zdo_min_congestion, zdo, "min-send-threshold", 2048,
               [](int val) { return val < 1000; });
+            r(m_zdo_max_send_rate, zdo, "max-send-rate", 153600,
+              [](int val) { return val < 153600; });
+            r(m_zdo_peer_send_interval, zdo, "peer-send-interval", 0ms,
+              nullptr);
             r(m_zdo_assign_interval, zdo, "assign-interval", 2s,
               [](std::chrono::seconds val) { return val < 1s; });
             r(m_zdo_owner_algo, experimental, "zdo-assign-algo", AssignAlgorithm::NONE,
